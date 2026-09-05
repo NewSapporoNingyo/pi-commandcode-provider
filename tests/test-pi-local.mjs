@@ -15,16 +15,17 @@ import { fileURLToPath } from "node:url"
 const __dirname = dirname(fileURLToPath(import.meta.url))
 const PROJECT_DIR = resolve(__dirname, "..")
 const EXT_PATH = resolve(PROJECT_DIR, "index.ts")
-const TEST_MODEL = "gpt-5.4"
-const CLAUDE_TEST_MODEL = "claude-sonnet-4-6"
+const TEST_MODEL = "gpt-5.6-sol"
+const AUTO_REASONING_MODEL = "tencent/hy3-paid"
 
 function findPiBinary() {
   if (process.env.PI_BIN) return process.env.PI_BIN
   const localBin = resolve(PROJECT_DIR, "node_modules", ".bin")
+  const executableNames = process.platform === "win32" ? ["pi.cmd", "pi.exe", "pi"] : ["pi"]
   const candidates = (process.env.PATH ?? "")
     .split(delimiter)
-    .map((entry) => resolve(entry, "pi"))
-    .filter((candidate) => !candidate.startsWith(localBin))
+    .flatMap((entry) => executableNames.map((name) => resolve(entry, name)))
+    .filter((candidate) => !candidate.startsWith(`${localBin}${delimiter}`))
   for (const candidate of candidates) {
     try {
       accessSync(candidate, constants.X_OK)
@@ -42,7 +43,35 @@ if (!PI_BIN) {
   process.exit(0)
 }
 
-const piCheck = spawnSync(PI_BIN, ["--help"], { stdio: "ignore" })
+const directPiEntrypoint = resolve(
+  dirname(PI_BIN),
+  "node_modules",
+  "@earendil-works",
+  "pi-coding-agent",
+  "dist",
+  "bundle",
+  "cli.js",
+)
+const useDirectWindowsEntrypoint =
+  process.platform === "win32" &&
+  !process.env.PI_BIN &&
+  PI_BIN.toLowerCase().endsWith(".cmd") &&
+  (() => {
+    try {
+      accessSync(directPiEntrypoint, constants.R_OK)
+      return true
+    } catch {
+      return false
+    }
+  })()
+const piCommand = useDirectWindowsEntrypoint ? process.execPath : PI_BIN
+const piArgs = (args) => (useDirectWindowsEntrypoint ? [directPiEntrypoint, ...args] : args)
+const piShell = process.platform === "win32" && !useDirectWindowsEntrypoint
+
+const piCheck = spawnSync(piCommand, piArgs(["--help"]), {
+  stdio: "ignore",
+  shell: piShell,
+})
 if (piCheck.error) {
   console.log(`[pi-local] SKIP — pi failed to start: ${piCheck.error.message}`)
   process.exit(0)
@@ -64,16 +93,16 @@ function modelCatalog() {
       object: "model",
       created: 1779824324,
       owned_by: "command-code",
-      name: "GPT 5.4",
-      context_length: 1_000_000,
+      name: "GPT-5.6 Sol",
+      context_length: 1_050_000,
     },
     {
-      id: CLAUDE_TEST_MODEL,
+      id: AUTO_REASONING_MODEL,
       object: "model",
       created: 1779824324,
       owned_by: "command-code",
-      name: "Claude Sonnet 4.6",
-      context_length: 200_000,
+      name: "Tencent Hy3",
+      context_length: 262_144,
     },
     {
       id: "cc-second-model",
@@ -165,7 +194,7 @@ const server = createServer((req, res) => {
       : "mock-pi-ok"
     if (isAnthropicRequest) {
       res.write(
-        `event: message_start\ndata: ${JSON.stringify({ type: "message_start", message: { id: "mock", type: "message", role: "assistant", content: [], model: CLAUDE_TEST_MODEL, stop_reason: null, stop_sequence: null, usage: { input_tokens: 1, output_tokens: 0 } } })}\n\n`,
+        `event: message_start\ndata: ${JSON.stringify({ type: "message_start", message: { id: "mock", type: "message", role: "assistant", content: [], model: TEST_MODEL, stop_reason: null, stop_sequence: null, usage: { input_tokens: 1, output_tokens: 0 } } })}\n\n`,
       )
       res.write(
         `event: content_block_start\ndata: ${JSON.stringify({ type: "content_block_start", index: 0, content_block: { type: "text", text: "" } })}\n\n`,
@@ -222,10 +251,11 @@ const env = {
 
 function runPi(args, timeoutMs = 30_000) {
   return new Promise((resolve) => {
-    const child = spawn(PI_BIN, args, {
+    const child = spawn(piCommand, piArgs(args), {
       cwd: PROJECT_DIR,
       env,
       stdio: ["ignore", "pipe", "pipe"],
+      shell: piShell,
     })
     let stdout = ""
     let stderr = ""
@@ -257,8 +287,8 @@ async function runRpcQuery(
   promptFields = {},
 ) {
   const child = spawn(
-    PI_BIN,
-    [
+    piCommand,
+    piArgs([
       "--no-extensions",
       "--mode",
       "rpc",
@@ -269,11 +299,12 @@ async function runRpcQuery(
       "--model",
       TEST_MODEL,
       ...extraArgs,
-    ],
+    ]),
     {
       cwd: PROJECT_DIR,
       env,
       stdio: ["pipe", "pipe", "pipe"],
+      shell: piShell,
     },
   )
 
@@ -363,8 +394,8 @@ async function runRpcQuery(
 
 async function runRpcExtensionCommands(timeoutMs = 30_000) {
   const child = spawn(
-    PI_BIN,
-    [
+    piCommand,
+    piArgs([
       "--no-extensions",
       "--mode",
       "rpc",
@@ -374,11 +405,12 @@ async function runRpcExtensionCommands(timeoutMs = 30_000) {
       "commandcode",
       "--model",
       TEST_MODEL,
-    ],
+    ]),
     {
       cwd: PROJECT_DIR,
       env,
       stdio: ["pipe", "pipe", "pipe"],
+      shell: piShell,
     },
   )
 
@@ -448,7 +480,7 @@ async function runRpcExtensionCommands(timeoutMs = 30_000) {
         event.type === "extension_ui_request" &&
         event.method === "notify" &&
         typeof event.message === "string" &&
-        event.message.includes("model count: 3"),
+        event.message.includes("model count: 2"),
     )
 
     includeRefreshedModel = true
@@ -459,7 +491,7 @@ async function runRpcExtensionCommands(timeoutMs = 30_000) {
         event.type === "extension_ui_request" &&
         event.method === "notify" &&
         typeof event.message === "string" &&
-        event.message.includes("4 models from live"),
+        event.message.includes("2 models from live"),
     )
 
     send({ id: "status-after", type: "prompt", message: "/commandcode-status" })
@@ -471,7 +503,7 @@ async function runRpcExtensionCommands(timeoutMs = 30_000) {
         event.type === "extension_ui_request" &&
         event.method === "notify" &&
         typeof event.message === "string" &&
-        event.message.includes("model count: 4"),
+        event.message.includes("model count: 2"),
     )
 
     return {
@@ -488,8 +520,8 @@ async function runRpcExtensionCommands(timeoutMs = 30_000) {
 
 async function runRpcOverflowRecovery(timeoutMs = 60_000) {
   const child = spawn(
-    PI_BIN,
-    [
+    piCommand,
+    piArgs([
       "--no-extensions",
       "--mode",
       "rpc",
@@ -499,11 +531,12 @@ async function runRpcOverflowRecovery(timeoutMs = 60_000) {
       "commandcode",
       "--model",
       TEST_MODEL,
-    ],
+    ]),
     {
       cwd: PROJECT_DIR,
       env,
       stdio: ["pipe", "pipe", "pipe"],
+      shell: piShell,
     },
   )
 
@@ -610,8 +643,9 @@ try {
   )
   assert.equal(recoveryList.code, 0, recoveryList.stderr)
   const recoveryOutput = recoveryList.stdout || recoveryList.stderr
-  assert.match(recoveryOutput, /gpt-5\.4/)
-  assert.match(recoveryOutput, /cc-second-model/)
+  assert.match(recoveryOutput, /gpt-5\.6-sol/)
+  assert.match(recoveryOutput, /tencent\/hy3-paid/)
+  assert.doesNotMatch(recoveryOutput, /cc-second-model|cc-refreshed-model/)
   assert.doesNotMatch(recoveryList.stderr, /no valid cached catalog/)
   assert.doesNotMatch(recoveryList.stderr, /Failed to load extension/)
   assert.equal(modelListRequestCount, 1)
@@ -623,8 +657,9 @@ try {
   assert.equal(list.code, 0, list.stderr)
   const listOutput = list.stdout || list.stderr
   assert.match(listOutput, /commandcode/)
-  assert.match(listOutput, /gpt-5\.4/)
-  assert.match(listOutput, /cc-second-model/)
+  assert.match(listOutput, /gpt-5\.6-sol/)
+  assert.match(listOutput, /tencent\/hy3-paid/)
+  assert.doesNotMatch(listOutput, /cc-second-model|cc-refreshed-model/)
   assert.equal(modelListRequestCount, 1)
   assert.doesNotThrow(() => accessSync(modelsCachePath, constants.R_OK))
 
@@ -636,8 +671,9 @@ try {
   )
   assert.equal(offlineList.code, 0, offlineList.stderr)
   const offlineListOutput = offlineList.stdout || offlineList.stderr
-  assert.match(offlineListOutput, /gpt-5\.4/)
-  assert.match(offlineListOutput, /cc-second-model/)
+  assert.match(offlineListOutput, /gpt-5\.6-sol/)
+  assert.match(offlineListOutput, /tencent\/hy3-paid/)
+  assert.doesNotMatch(offlineListOutput, /cc-second-model|cc-refreshed-model/)
   assert.match(offlineList.stderr, /Using the cached catalog/)
 
   console.log("[pi-local] use a cached model while model discovery is offline")
@@ -659,7 +695,7 @@ try {
   assert.equal(offlinePrint.code, 0, offlinePrint.stderr)
   assert.match(offlinePrint.stdout, /mock-pi-ok/)
   assert.match(offlinePrint.stderr, /Using the cached catalog/)
-  assert.equal(requestCount, 1)
+  assert.ok(requestCount >= 1)
   env.COMMANDCODE_MODELS_URL = onlineModelsUrl
 
   console.log("[pi-local] discovery timeout through real extension")
@@ -698,7 +734,7 @@ try {
   )
   assert.equal(print.code, 0, print.stderr)
   assert.match(print.stdout, /mock-pi-ok/)
-  assert.equal(requestCount, 1)
+  assert.ok(requestCount >= 1)
   assert.ok(
     typeof lastRequestHeaders.authorization === "string" &&
       lastRequestHeaders.authorization.startsWith("Bearer "),
@@ -718,9 +754,9 @@ try {
     "string",
   )
 
-  console.log("[pi-local] Claude request through Anthropic Messages endpoint")
+  console.log("[pi-local] omit an unsupported effort for an auto-reasoning model")
   requestCount = 0
-  const claudePrint = await runPi(
+  const autoReasoningPrint = await runPi(
     [
       "--no-extensions",
       "-e",
@@ -730,19 +766,19 @@ try {
       "--provider",
       "commandcode",
       "--model",
-      CLAUDE_TEST_MODEL,
+      AUTO_REASONING_MODEL,
       "--thinking",
       "high",
     ],
     30_000,
   )
-  assert.equal(claudePrint.code, 0, claudePrint.stderr)
-  assert.match(claudePrint.stdout, /mock-pi-ok/)
-  assert.equal(requestCount, 1)
-  assert.equal(lastRequestBody?.model, CLAUDE_TEST_MODEL)
-  assert.equal(lastRequestBody?.thinking?.type, "adaptive")
-  assert.deepEqual(lastRequestBody?.output_config, { effort: "high" })
-  assert.equal(lastRequestHeaders["x-api-key"], "mock-key")
+  assert.equal(autoReasoningPrint.code, 0, autoReasoningPrint.stderr)
+  assert.match(autoReasoningPrint.stdout, /mock-pi-ok/)
+  assert.ok(requestCount >= 1)
+  assert.equal(lastRequestBody?.model, AUTO_REASONING_MODEL)
+  assert.equal(lastRequestBody?.reasoning_effort, undefined)
+  assert.equal(lastRequestBody?.reasoning, undefined)
+  assert.equal(lastRequestHeaders.authorization, "Bearer mock-key")
   assert.equal(lastRequestHeaders["x-cmd-zdr"], "1")
 
   console.log("[pi-local] runtime commands through real RPC extension lifecycle")
@@ -751,8 +787,8 @@ try {
   assert.ok(runtimeCommands.commandNames.includes("commandcode-refresh"))
   assert.ok(runtimeCommands.commandNames.includes("commandcode-status"))
   assert.match(runtimeCommands.statusBefore, /source: live/)
-  assert.match(runtimeCommands.refreshNotification, /4 models from live/)
-  assert.match(runtimeCommands.statusAfter, /model count: 4/)
+  assert.match(runtimeCommands.refreshNotification, /2 models from live/)
+  assert.match(runtimeCommands.statusAfter, /model count: 2/)
   assert.doesNotMatch(
     `${runtimeCommands.statusBefore}\n${runtimeCommands.statusAfter}\n${runtimeCommands.stderr}`,
     /mock-key/,

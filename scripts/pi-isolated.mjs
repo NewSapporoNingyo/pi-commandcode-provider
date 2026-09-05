@@ -6,6 +6,8 @@ import { tmpdir } from "node:os"
 import { dirname, join, resolve } from "node:path"
 import { fileURLToPath } from "node:url"
 
+import { spawnPi } from "./pi-command.mjs"
+
 const repoRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..")
 const testRoot = await mkdtemp(join(tmpdir(), "pi-commandcode-isolated-"))
 const agentDir = join(testRoot, "agent")
@@ -40,7 +42,13 @@ process.on("SIGTERM", forwardSigterm)
 
 function runPi(args) {
   return new Promise((resolveRun, rejectRun) => {
-    const child = spawn("pi", args, { cwd: repoRoot, env, stdio: "inherit" })
+    let child
+    try {
+      child = spawnPi(spawn, args, { cwd: repoRoot, env, stdio: "inherit" })
+    } catch (error) {
+      rejectRun(error)
+      return
+    }
     activeChild = child
     child.once("error", rejectRun)
     child.once("exit", (status, signal) => {

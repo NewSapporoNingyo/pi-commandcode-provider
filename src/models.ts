@@ -9,6 +9,7 @@ import {
   type CommandCodeInputType,
   type CommandCodeReasoningEffort,
 } from "./commandcode-catalog.ts"
+import { isAllowedCommandCodeModelId } from "./commandcode-allowlist.ts"
 
 export { MODEL_EFFORTS, MODEL_INPUT_MODALITIES, MODEL_MAX_OUTPUT_TOKENS, MODEL_REASONING }
 export type { CommandCodeInputType }
@@ -101,6 +102,12 @@ export interface CommandCodeModel {
   reasoning: boolean
   contextWindow: number
   maxTokens: number
+}
+
+export function filterAllowedCommandCodeModels(
+  models: readonly CommandCodeModel[],
+): readonly CommandCodeModel[] {
+  return models.filter((model) => isAllowedCommandCodeModelId(model.id))
 }
 
 export function apiForModelId(id: string): CommandCodeApi {
@@ -278,14 +285,22 @@ export function commandCodeModelsFromApiResponse(value: unknown): readonly Comma
   const data = value.data
   if (!Array.isArray(data)) throw new Error("Expected models response data to be an array")
 
-  return data.map(parseApiModel).map((model) => ({
-    id: model.id,
-    name: `${model.name} (CC)`,
-    api: apiForModelId(model.id),
-    reasoning: isReasoningModel(model.id),
-    contextWindow: model.contextLength,
-    maxTokens: maxOutputTokensForModel(model.id, model.contextLength),
-  }))
+  return filterAllowedCommandCodeModels(
+    data
+      .filter(
+        (entry) =>
+          isRecord(entry) && typeof entry.id === "string" && isAllowedCommandCodeModelId(entry.id),
+      )
+      .map(parseApiModel)
+      .map((model) => ({
+        id: model.id,
+        name: `${model.name} (CC)`,
+        api: apiForModelId(model.id),
+        reasoning: isReasoningModel(model.id),
+        contextWindow: model.contextLength,
+        maxTokens: maxOutputTokensForModel(model.id, model.contextLength),
+      })),
+  )
 }
 
 export function commandCodeModelsFromCache(value: unknown): readonly CommandCodeModel[] {
@@ -295,7 +310,18 @@ export function commandCodeModelsFromCache(value: unknown): readonly CommandCode
   }
   if (!Array.isArray(value.models)) throw new Error("Expected cached models to be an array")
 
-  return requireModels(value.models.map(parseCachedModel))
+  return requireModels(
+    filterAllowedCommandCodeModels(
+      value.models
+        .filter(
+          (entry) =>
+            isRecord(entry) &&
+            typeof entry.id === "string" &&
+            isAllowedCommandCodeModelId(entry.id),
+        )
+        .map(parseCachedModel),
+    ),
+  )
 }
 
 export async function fetchCommandCodeModels(

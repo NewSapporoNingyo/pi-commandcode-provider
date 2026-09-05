@@ -4,6 +4,7 @@ import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { describe, it } from "node:test"
 
+import { COMMAND_CODE_ALLOWED_MODEL_IDS } from "../src/commandcode-allowlist.ts"
 import { COMMAND_CODE_CLI_VERSION } from "../src/commandcode-catalog.ts"
 import {
   apiForModelId,
@@ -11,6 +12,7 @@ import {
   commandCodeModelsFromApiResponse,
   commandCodeModelsFromCache,
   DEFAULT_MODELS_TIMEOUT_MS,
+  filterAllowedCommandCodeModels,
   getModelsTimeoutMs,
   inputModalitiesForModel,
   loadCommandCodeModels,
@@ -24,30 +26,122 @@ import {
   type CommandCodeModel,
 } from "../src/models.ts"
 
+const GPT_API_MODEL = {
+  id: "gpt-5.6-sol",
+  object: "model",
+  created: 1779824324,
+  owned_by: "command-code",
+  name: "GPT-5.6 Sol",
+  context_length: 1_050_000,
+}
+
 const API_RESPONSE = {
   object: "list",
+  data: [GPT_API_MODEL],
+}
+
+const ALLOWLIST_API_RESPONSE = {
+  object: "list",
   data: [
+    GPT_API_MODEL,
     {
-      id: "Qwen/Qwen3.7-Max",
-      object: "model",
-      created: 1779824324,
-      owned_by: "command-code",
-      name: "Qwen 3.7 Max",
+      ...GPT_API_MODEL,
+      id: "zai-org/GLM-5.2",
+      name: "GLM-5.2",
       context_length: 1_000_000,
+    },
+    {
+      ...GPT_API_MODEL,
+      id: "tencent/hy3-paid",
+      name: "Tencent Hy3",
+      context_length: 262_144,
+    },
+    {
+      ...GPT_API_MODEL,
+      id: "Qwen/Qwen3.8-27B",
+      name: "Qwen 3.8 27B",
+      context_length: 262_144,
+    },
+    {
+      ...GPT_API_MODEL,
+      id: "deepseek/deepseek-v4-flash",
+      name: "DeepSeek V4 Flash (latest)",
+      context_length: 1_000_000,
+    },
+    {
+      ...GPT_API_MODEL,
+      id: "moonshotai/Kimi-K2.7-Code",
+      name: "Kimi K2.7 Code",
+      context_length: 256_000,
+    },
+    {
+      ...GPT_API_MODEL,
+      id: "MiniMaxAI/MiniMax-M3",
+      name: "MiniMax M3",
+      context_length: 1_000_000,
+    },
+    {
+      ...GPT_API_MODEL,
+      id: "z-ai/glm-5.3-flash",
+      name: "GLM-5.3 Flash",
+      context_length: 1_048_576,
+    },
+    {
+      ...GPT_API_MODEL,
+      id: "minimax/minimax-m3-free",
+      name: "MiniMax M3",
+      context_length: 1_000_000,
+    },
+    {
+      ...GPT_API_MODEL,
+      id: "minimax/minimax-m2.7-free",
+      name: "MiniMax M2.7",
+      context_length: 197_000,
+    },
+    {
+      ...GPT_API_MODEL,
+      id: "poolside/laguna-s-2.1-free",
+      name: "Laguna S 2.1",
+      context_length: 256_000,
+    },
+    {
+      id: "provider/non-allowlisted-model",
     },
   ],
 }
 
 const EXPECTED_MODELS: readonly CommandCodeModel[] = [
   {
-    id: "Qwen/Qwen3.7-Max",
-    name: "Qwen 3.7 Max (CC)",
+    id: "gpt-5.6-sol",
+    name: "GPT-5.6 Sol (CC)",
     api: "openai-completions",
     reasoning: true,
-    contextWindow: 1_000_000,
+    contextWindow: 1_050_000,
     maxTokens: 65_536,
   },
 ]
+
+const EXPECTED_REASONING: Readonly<
+  Record<
+    string,
+    {
+      reasoning: boolean
+      efforts: readonly string[]
+    }
+  >
+> = {
+  "gpt-5.6-sol": { reasoning: true, efforts: ["low", "medium", "high", "xhigh", "max"] },
+  "zai-org/GLM-5.2": { reasoning: true, efforts: ["high", "max"] },
+  "tencent/hy3-paid": { reasoning: true, efforts: [] },
+  "Qwen/Qwen3.8-27B": { reasoning: true, efforts: ["low", "medium", "xhigh"] },
+  "deepseek/deepseek-v4-flash": { reasoning: true, efforts: ["high", "max"] },
+  "moonshotai/Kimi-K2.7-Code": { reasoning: true, efforts: [] },
+  "MiniMaxAI/MiniMax-M3": { reasoning: true, efforts: [] },
+  "z-ai/glm-5.3-flash": { reasoning: true, efforts: ["low", "high", "max"] },
+  "minimax/minimax-m3-free": { reasoning: true, efforts: [] },
+  "minimax/minimax-m2.7-free": { reasoning: false, efforts: [] },
+  "poolside/laguna-s-2.1-free": { reasoning: true, efforts: [] },
+}
 
 function successfulFetch(): typeof fetch {
   return () =>
@@ -85,9 +179,49 @@ async function withTemporaryCache(
   }
 }
 
+function allowlistFetch(): typeof fetch {
+  return () =>
+    Promise.resolve(
+      new Response(JSON.stringify(ALLOWLIST_API_RESPONSE), {
+        status: 200,
+        headers: { "content-type": "application/json" },
+      }),
+    )
+}
+
 describe("commandCodeModelsFromApiResponse()", () => {
   it("converts the Provider API model list to pi models", () => {
     assert.deepEqual(commandCodeModelsFromApiResponse(API_RESPONSE), EXPECTED_MODELS)
+  })
+
+  it("keeps exactly the reviewed allowlist when live API data has extra models", () => {
+    const models = commandCodeModelsFromApiResponse(ALLOWLIST_API_RESPONSE)
+
+    assert.deepEqual(
+      models.map((model) => model.id),
+      COMMAND_CODE_ALLOWED_MODEL_IDS,
+    )
+    assert.deepEqual(
+      models.map(({ id, name }) => ({ id, name })),
+      [
+        { id: "gpt-5.6-sol", name: "GPT-5.6 Sol (CC)" },
+        { id: "zai-org/GLM-5.2", name: "GLM-5.2 (CC)" },
+        { id: "tencent/hy3-paid", name: "Tencent Hy3 (CC)" },
+        { id: "Qwen/Qwen3.8-27B", name: "Qwen 3.8 27B (CC)" },
+        { id: "deepseek/deepseek-v4-flash", name: "DeepSeek V4 Flash (latest) (CC)" },
+        { id: "moonshotai/Kimi-K2.7-Code", name: "Kimi K2.7 Code (CC)" },
+        { id: "MiniMaxAI/MiniMax-M3", name: "MiniMax M3 (CC)" },
+        { id: "z-ai/glm-5.3-flash", name: "GLM-5.3 Flash (CC)" },
+        { id: "minimax/minimax-m3-free", name: "MiniMax M3 (CC)" },
+        { id: "minimax/minimax-m2.7-free", name: "MiniMax M2.7 (CC)" },
+        { id: "poolside/laguna-s-2.1-free", name: "Laguna S 2.1 (CC)" },
+      ],
+    )
+    assert.equal(
+      models.some((model) => model.id === "provider/non-allowlisted-model"),
+      false,
+    )
+    assert.deepEqual(filterAllowedCommandCodeModels([...models]), models)
   })
 
   it("routes Claude models to Anthropic Messages and all others to Chat Completions", () => {
@@ -112,13 +246,13 @@ describe("commandCodeModelsFromApiResponse()", () => {
     ])
     assert.deepEqual(inputModalitiesForModel("Qwen/Qwen3.8-27B"), ["text", "image"])
     assert.deepEqual(inputModalitiesForModel("google/gemini-3.7-flash"), ["text", "image"])
-    assert.deepEqual(inputModalitiesForModel("stealth/ox-alpha"), ["text", "image"])
+    assert.deepEqual(inputModalitiesForModel("minimax/minimax-m3-free"), ["text", "image"])
     assert.deepEqual(inputModalitiesForModel("deepseek/deepseek-v4-pro"), ["text"])
     assert.deepEqual(inputModalitiesForModel("zai-org/GLM-5.3"), ["text"])
     assert.deepEqual(inputModalitiesForModel("unknown-new-model"), ["text"])
     assert.equal(modelSupportsImageInput("gpt-5.6-luna"), true)
     assert.equal(modelSupportsImageInput("deepseek/deepseek-v4-flash-vision-exp"), true)
-    assert.equal(modelSupportsImageInput("stealth/ox-alpha"), true)
+    assert.equal(modelSupportsImageInput("minimax/minimax-m3-free"), true)
     assert.equal(modelSupportsImageInput("deepseek/deepseek-v4-pro"), false)
     assert.ok(Object.keys(MODEL_INPUT_MODALITIES).length > 0)
     for (const modalities of Object.values(MODEL_INPUT_MODALITIES)) {
@@ -131,14 +265,14 @@ describe("commandCodeModelsFromApiResponse()", () => {
       object: "list",
       data: [
         { ...API_RESPONSE.data[0], id: "deepseek/deepseek-v4-flash" },
-        { ...API_RESPONSE.data[0], id: "moonshotai/Kimi-K3" },
-        { ...API_RESPONSE.data[0], id: "new-model-without-metadata" },
+        { ...API_RESPONSE.data[0], id: "moonshotai/Kimi-K2.7-Code" },
+        { ...API_RESPONSE.data[0], id: "minimax/minimax-m2.7-free" },
       ],
     })
 
     assert.equal(models[0]?.reasoning, true)
     assert.equal(models[1]?.reasoning, true)
-    assert.deepEqual(thinkingMetadataForModel("moonshotai/Kimi-K3"), {
+    assert.deepEqual(thinkingMetadataForModel("moonshotai/Kimi-K2.7-Code"), {
       thinkingLevelMap: {
         minimal: null,
         low: null,
@@ -149,7 +283,8 @@ describe("commandCodeModelsFromApiResponse()", () => {
       },
     })
     assert.equal(models[2]?.reasoning, false)
-    assert.equal(Object.keys(MODEL_REASONING).length, 48)
+    assert.equal(MODEL_REASONING["minimax/minimax-m2.7-free"], undefined)
+    assert.equal(MODEL_REASONING["minimax/minimax-m3-free"], true)
   })
 
   it("uses model-specific output limits from the CLI catalog", () => {
@@ -157,7 +292,7 @@ describe("commandCodeModelsFromApiResponse()", () => {
       object: "list",
       data: [
         { ...API_RESPONSE.data[0], id: "Qwen/Qwen3.8-27B", context_length: 262_144 },
-        { ...API_RESPONSE.data[0], id: "stealth/ox-alpha", context_length: 1_048_576 },
+        { ...API_RESPONSE.data[0], id: "z-ai/glm-5.3-flash", context_length: 1_048_576 },
         {
           ...API_RESPONSE.data[0],
           id: "poolside/laguna-s-2.1-free",
@@ -170,7 +305,7 @@ describe("commandCodeModelsFromApiResponse()", () => {
       models.map(({ id, maxTokens }) => ({ id, maxTokens })),
       [
         { id: "Qwen/Qwen3.8-27B", maxTokens: 32_768 },
-        { id: "stealth/ox-alpha", maxTokens: 131_072 },
+        { id: "z-ai/glm-5.3-flash", maxTokens: 131_072 },
         { id: "poolside/laguna-s-2.1-free", maxTokens: 32_768 },
       ],
     )
@@ -220,8 +355,48 @@ describe("commandCodeModelsFromApiResponse()", () => {
     assert.deepEqual(thinkingMetadataForModel("new-model-without-metadata"), undefined)
   })
 
+  it("matches the reasoning and unsupported-level matrix for all allowlisted models", () => {
+    const models = new Map(
+      commandCodeModelsFromApiResponse(ALLOWLIST_API_RESPONSE).map((model) => [model.id, model]),
+    )
+    const unsupportedLevels = ["minimal", "low", "medium", "high", "xhigh", "max"] as const
+
+    for (const modelId of COMMAND_CODE_ALLOWED_MODEL_IDS) {
+      const expected = EXPECTED_REASONING[modelId]
+      assert.ok(expected, `missing expected reasoning metadata for ${modelId}`)
+      assert.equal(models.get(modelId)?.reasoning, expected.reasoning)
+      assert.deepEqual(MODEL_EFFORTS[modelId] ?? [], expected.efforts)
+
+      const metadata = thinkingMetadataForModel(modelId)
+      if (!expected.reasoning) {
+        assert.equal(metadata, undefined)
+        continue
+      }
+
+      assert.ok(metadata)
+      for (const level of unsupportedLevels) {
+        assert.equal(
+          metadata.thinkingLevelMap[level],
+          expected.efforts.includes(level) ? level : null,
+          `${modelId} should map ${level} according to its catalog entry`,
+        )
+      }
+      if (expected.efforts.length === 0) assert.equal(metadata.thinking, undefined)
+      else assert.deepEqual(metadata.thinking?.efforts, expected.efforts)
+    }
+  })
+
   it("rejects unexpected API shapes", () => {
-    assert.throws(() => commandCodeModelsFromApiResponse({ object: "list", data: [{}] }))
+    assert.deepEqual(
+      commandCodeModelsFromApiResponse({
+        object: "list",
+        data: [{ id: "provider/non-allowlisted-model" }],
+      }),
+      [],
+    )
+    assert.throws(() =>
+      commandCodeModelsFromApiResponse({ object: "list", data: [{ id: "gpt-5.6-sol" }] }),
+    )
   })
 })
 
@@ -229,6 +404,26 @@ describe("commandCodeModelsFromCache()", () => {
   it("accepts the current cache format", () => {
     assert.deepEqual(
       commandCodeModelsFromCache({ version: 1, models: EXPECTED_MODELS }),
+      EXPECTED_MODELS,
+    )
+  })
+
+  it("filters extra entries from an older cache before registration", () => {
+    assert.deepEqual(
+      commandCodeModelsFromCache({
+        version: 1,
+        models: [
+          ...EXPECTED_MODELS,
+          {
+            ...EXPECTED_MODELS[0],
+            id: "provider/non-allowlisted-model",
+            name: "Non-allowlisted model (CC)",
+            reasoning: false,
+            contextWindow: undefined,
+            maxTokens: undefined,
+          },
+        ],
+      }),
       EXPECTED_MODELS,
     )
   })
@@ -326,6 +521,42 @@ describe("loadCommandCodeModels()", () => {
     })
   })
 
+  it("filters live results before cache writes and on refresh", async () => {
+    await withTemporaryCache(async ({ cachePath }) => {
+      const first = await loadCommandCodeModels({
+        cachePath,
+        fetchImpl: allowlistFetch(),
+      })
+      assert.equal(first.source, "live")
+      assert.deepEqual(
+        first.models.map((model) => model.id),
+        COMMAND_CODE_ALLOWED_MODEL_IDS,
+      )
+
+      const cached = JSON.parse(await readFile(cachePath, "utf-8")) as {
+        models: readonly { id: string }[]
+      }
+      assert.deepEqual(
+        cached.models.map((model) => model.id),
+        COMMAND_CODE_ALLOWED_MODEL_IDS,
+      )
+
+      const refreshed = await loadCommandCodeModels({
+        cachePath,
+        fetchImpl: allowlistFetch(),
+      })
+      assert.equal(refreshed.source, "live")
+      assert.deepEqual(
+        refreshed.models.map((model) => model.id),
+        COMMAND_CODE_ALLOWED_MODEL_IDS,
+      )
+      assert.equal(
+        refreshed.models.some((model) => model.id === "provider/non-allowlisted-model"),
+        false,
+      )
+    })
+  })
+
   it("uses the last valid catalog when the refresh fails", async () => {
     await withTemporaryCache(async ({ cachePath }) => {
       await loadCommandCodeModels({ cachePath, fetchImpl: successfulFetch() })
@@ -339,6 +570,35 @@ describe("loadCommandCodeModels()", () => {
       assert.equal(result.source, "cache")
       assert.match(result.warning ?? "", /offline/)
       assert.match(result.warning ?? "", /Using the cached catalog/)
+    })
+  })
+
+  it("filters extra models from an old cache during offline fallback", async () => {
+    await withTemporaryCache(async ({ cachePath }) => {
+      await writeFile(
+        cachePath,
+        `${JSON.stringify({
+          version: 1,
+          models: [
+            ...EXPECTED_MODELS,
+            {
+              ...EXPECTED_MODELS[0],
+              id: "provider/non-allowlisted-model",
+              name: "Non-allowlisted model (CC)",
+              reasoning: false,
+            },
+          ],
+        })}\n`,
+        "utf-8",
+      )
+
+      const result = await loadCommandCodeModels({
+        cachePath,
+        fetchImpl: failingFetch(),
+      })
+
+      assert.equal(result.source, "cache")
+      assert.deepEqual(result.models, EXPECTED_MODELS)
     })
   })
 

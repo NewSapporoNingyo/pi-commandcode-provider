@@ -40,7 +40,7 @@ Start the current checkout with your existing pi credentials and only Command Co
 npm run pi:authenticated
 ```
 
-Both commands accept additional pi arguments after `--`, for example `npm run pi:authenticated -- --model claude-sonnet-4-6`.
+Both commands accept additional pi arguments after `--`, for example `npm run pi:authenticated -- --model gpt-5.6-sol`.
 
 Run the transport-specific live tests with separate credentials:
 

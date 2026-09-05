@@ -1,7 +1,7 @@
 import { execFile } from "node:child_process"
 import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises"
 import { tmpdir } from "node:os"
-import { join, resolve } from "node:path"
+import { dirname, join, resolve } from "node:path"
 import { pathToFileURL } from "node:url"
 import { promisify } from "node:util"
 
@@ -14,6 +14,11 @@ import {
 } from "../../src/commandcode-catalog.ts"
 
 const execFileAsync = promisify(execFile)
+const NPM_COMMAND = process.platform === "win32" ? process.execPath : "npm"
+const NPM_PREFIX_ARGS =
+  process.platform === "win32"
+    ? [join(dirname(process.execPath), "node_modules", "npm", "bin", "npm-cli.js")]
+    : []
 const MODELS_REFERENCE_PATH = "dist/bundled/command-code-knowledge/reference/models.md"
 const CLI_BUNDLE_PATH = "dist/cli.mjs"
 const TEXT_ONLY_MARKER = ',__name(isKnownTextOnlyModel,"isKnownTextOnlyModel")'
@@ -418,8 +423,17 @@ async function resolvePackageSpec(
   if (packageSpec !== "command-code@latest") return packageSpec
 
   const { stdout } = await execFileAsync(
-    "npm",
-    ["view", packageSpec, "version", "--json", "--prefer-online", "--cache", npmCacheDirectory],
+    NPM_COMMAND,
+    [
+      ...NPM_PREFIX_ARGS,
+      "view",
+      packageSpec,
+      "version",
+      "--json",
+      "--prefer-online",
+      "--cache",
+      npmCacheDirectory,
+    ],
     {
       cwd: directory,
       encoding: "utf-8",
@@ -438,8 +452,16 @@ async function inspectPackedPackage(packageSpec: string): Promise<{
   try {
     const resolvedPackageSpec = await resolvePackageSpec(packageSpec, directory, npmCacheDirectory)
     const { stdout } = await execFileAsync(
-      "npm",
-      ["pack", resolvedPackageSpec, "--json", "--prefer-online", "--cache", npmCacheDirectory],
+      NPM_COMMAND,
+      [
+        ...NPM_PREFIX_ARGS,
+        "pack",
+        resolvedPackageSpec,
+        "--json",
+        "--prefer-online",
+        "--cache",
+        npmCacheDirectory,
+      ],
       {
         cwd: directory,
         encoding: "utf-8",

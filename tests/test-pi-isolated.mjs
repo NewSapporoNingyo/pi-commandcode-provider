@@ -1,6 +1,6 @@
 import assert from "node:assert/strict"
 import { spawnSync } from "node:child_process"
-import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs"
+import { existsSync, mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { delimiter, dirname, join, resolve } from "node:path"
 import { fileURLToPath } from "node:url"
@@ -12,13 +12,17 @@ const launcher = join(repoRoot, "scripts", "pi-isolated.mjs")
 function runLauncher({ exitStatus = 0 } = {}) {
   const fakeBin = mkdtempSync(join(tmpdir(), "pi-commandcode-fake-bin-"))
   const logPath = join(fakeBin, "calls.jsonl")
-  const fakePi = join(fakeBin, "pi")
-
-  writeFileSync(
-    fakePi,
-    `#!/bin/sh
-node - "$@" <<'NODE'
-const { appendFileSync } = require("node:fs")
+  const fakePi = join(fakeBin, process.platform === "win32" ? "pi.cmd" : "pi")
+  const fakePiEntrypoint = join(
+    fakeBin,
+    "node_modules",
+    "@earendil-works",
+    "pi-coding-agent",
+    "dist",
+    "bundle",
+    "cli.js",
+  )
+  const fakePiSource = `import { appendFileSync } from "node:fs"
 appendFileSync(process.env.FAKE_PI_LOG, JSON.stringify({
   args: process.argv.slice(2),
   agentDir: process.env.PI_CODING_AGENT_DIR,
@@ -29,12 +33,19 @@ appendFileSync(process.env.FAKE_PI_LOG, JSON.stringify({
   inheritedApiKey:
     process.env.COMMAND_CODE_API_KEY ?? process.env.COMMANDCODE_API_KEY ?? null,
 }) + "\\n")
-NODE
-if [ "$1" = "install" ]; then exit 0; fi
-exit ${exitStatus}
-`,
-    { mode: 0o700 },
-  )
+process.exit(process.argv[2] === "install" ? 0 : ${exitStatus})
+`
+  mkdirSync(join(fakeBin, "node_modules", "@earendil-works", "pi-coding-agent", "dist", "bundle"), {
+    recursive: true,
+  })
+  writeFileSync(fakePiEntrypoint, fakePiSource)
+  if (process.platform === "win32") {
+    writeFileSync(fakePi, "@echo off\r\nexit /b 0\r\n")
+  } else {
+    writeFileSync(fakePi, `#!/bin/sh\nexec "${process.execPath}" "${fakePiEntrypoint}" "$@"\n`, {
+      mode: 0o700,
+    })
+  }
 
   try {
     const result = spawnSync(process.execPath, [launcher, "--model", "claude-sonnet-5"], {
