@@ -70,6 +70,12 @@ const ALLOWLIST_API_RESPONSE = {
     },
     {
       ...GPT_API_MODEL,
+      id: "deepseek/deepseek-v4.1-flash",
+      name: "DeepSeek V4.1 Flash",
+      context_length: 1_000_000,
+    },
+    {
+      ...GPT_API_MODEL,
       id: "moonshotai/Kimi-K2.7-Code",
       name: "Kimi K2.7 Code",
       context_length: 256_000,
@@ -88,21 +94,21 @@ const ALLOWLIST_API_RESPONSE = {
     },
     {
       ...GPT_API_MODEL,
-      id: "minimax/minimax-m3-free",
-      name: "MiniMax M3",
-      context_length: 1_000_000,
-    },
-    {
-      ...GPT_API_MODEL,
-      id: "minimax/minimax-m2.7-free",
-      name: "MiniMax M2.7",
-      context_length: 197_000,
-    },
-    {
-      ...GPT_API_MODEL,
       id: "poolside/laguna-s-2.1-free",
       name: "Laguna S 2.1",
       context_length: 256_000,
+    },
+    {
+      ...GPT_API_MODEL,
+      id: "meituan/LongCat-2.0:free",
+      name: "LongCat 2.0",
+      context_length: 1_048_576,
+    },
+    {
+      ...GPT_API_MODEL,
+      id: "inclusionai/ling-3.0-flash-sante:free",
+      name: "Ling 3.0 Flash Sante",
+      context_length: 262_144,
     },
     {
       id: "provider/non-allowlisted-model",
@@ -135,12 +141,13 @@ const EXPECTED_REASONING: Readonly<
   "tencent/hy3-paid": { reasoning: true, efforts: [] },
   "Qwen/Qwen3.8-27B": { reasoning: true, efforts: ["low", "medium", "xhigh"] },
   "deepseek/deepseek-v4-flash": { reasoning: true, efforts: ["high", "max"] },
+  "deepseek/deepseek-v4.1-flash": { reasoning: true, efforts: ["low", "high", "max"] },
   "moonshotai/Kimi-K2.7-Code": { reasoning: true, efforts: [] },
-  "MiniMaxAI/MiniMax-M3": { reasoning: true, efforts: [] },
+  "MiniMaxAI/MiniMax-M3": { reasoning: true, efforts: ["low", "medium", "high"] },
   "z-ai/glm-5.3-flash": { reasoning: true, efforts: ["low", "high", "max"] },
-  "minimax/minimax-m3-free": { reasoning: true, efforts: [] },
-  "minimax/minimax-m2.7-free": { reasoning: false, efforts: [] },
   "poolside/laguna-s-2.1-free": { reasoning: true, efforts: [] },
+  "meituan/LongCat-2.0:free": { reasoning: true, efforts: [] },
+  "inclusionai/ling-3.0-flash-sante:free": { reasoning: true, efforts: [] },
 }
 
 function successfulFetch(): typeof fetch {
@@ -209,12 +216,16 @@ describe("commandCodeModelsFromApiResponse()", () => {
         { id: "tencent/hy3-paid", name: "Tencent Hy3 (CC)" },
         { id: "Qwen/Qwen3.8-27B", name: "Qwen 3.8 27B (CC)" },
         { id: "deepseek/deepseek-v4-flash", name: "DeepSeek V4 Flash (latest) (CC)" },
+        { id: "deepseek/deepseek-v4.1-flash", name: "DeepSeek V4.1 Flash (CC)" },
         { id: "moonshotai/Kimi-K2.7-Code", name: "Kimi K2.7 Code (CC)" },
         { id: "MiniMaxAI/MiniMax-M3", name: "MiniMax M3 (CC)" },
         { id: "z-ai/glm-5.3-flash", name: "GLM-5.3 Flash (CC)" },
-        { id: "minimax/minimax-m3-free", name: "MiniMax M3 (CC)" },
-        { id: "minimax/minimax-m2.7-free", name: "MiniMax M2.7 (CC)" },
         { id: "poolside/laguna-s-2.1-free", name: "Laguna S 2.1 (CC)" },
+        { id: "meituan/LongCat-2.0:free", name: "LongCat 2.0 (CC)" },
+        {
+          id: "inclusionai/ling-3.0-flash-sante:free",
+          name: "Ling 3.0 Flash Sante (CC)",
+        },
       ],
     )
     assert.equal(
@@ -244,15 +255,19 @@ describe("commandCodeModelsFromApiResponse()", () => {
       "text",
       "image",
     ])
+    assert.deepEqual(inputModalitiesForModel("deepseek/deepseek-v4.1-flash"), ["text", "image"])
     assert.deepEqual(inputModalitiesForModel("Qwen/Qwen3.8-27B"), ["text", "image"])
     assert.deepEqual(inputModalitiesForModel("google/gemini-3.7-flash"), ["text", "image"])
-    assert.deepEqual(inputModalitiesForModel("minimax/minimax-m3-free"), ["text", "image"])
+    assert.deepEqual(inputModalitiesForModel("meituan/LongCat-2.0:free"), ["text"])
+    assert.deepEqual(inputModalitiesForModel("inclusionai/ling-3.0-flash-sante:free"), ["text"])
     assert.deepEqual(inputModalitiesForModel("deepseek/deepseek-v4-pro"), ["text"])
     assert.deepEqual(inputModalitiesForModel("zai-org/GLM-5.3"), ["text"])
     assert.deepEqual(inputModalitiesForModel("unknown-new-model"), ["text"])
     assert.equal(modelSupportsImageInput("gpt-5.6-luna"), true)
     assert.equal(modelSupportsImageInput("deepseek/deepseek-v4-flash-vision-exp"), true)
-    assert.equal(modelSupportsImageInput("minimax/minimax-m3-free"), true)
+    assert.equal(modelSupportsImageInput("deepseek/deepseek-v4.1-flash"), true)
+    assert.equal(modelSupportsImageInput("meituan/LongCat-2.0:free"), false)
+    assert.equal(modelSupportsImageInput("inclusionai/ling-3.0-flash-sante:free"), false)
     assert.equal(modelSupportsImageInput("deepseek/deepseek-v4-pro"), false)
     assert.ok(Object.keys(MODEL_INPUT_MODALITIES).length > 0)
     for (const modalities of Object.values(MODEL_INPUT_MODALITIES)) {
@@ -264,9 +279,9 @@ describe("commandCodeModelsFromApiResponse()", () => {
     const models = commandCodeModelsFromApiResponse({
       object: "list",
       data: [
-        { ...API_RESPONSE.data[0], id: "deepseek/deepseek-v4-flash" },
+        { ...API_RESPONSE.data[0], id: "deepseek/deepseek-v4.1-flash" },
         { ...API_RESPONSE.data[0], id: "moonshotai/Kimi-K2.7-Code" },
-        { ...API_RESPONSE.data[0], id: "minimax/minimax-m2.7-free" },
+        { ...API_RESPONSE.data[0], id: "inclusionai/ling-3.0-flash-sante:free" },
       ],
     })
 
@@ -282,9 +297,9 @@ describe("commandCodeModelsFromApiResponse()", () => {
         max: null,
       },
     })
-    assert.equal(models[2]?.reasoning, false)
-    assert.equal(MODEL_REASONING["minimax/minimax-m2.7-free"], undefined)
-    assert.equal(MODEL_REASONING["minimax/minimax-m3-free"], true)
+    assert.equal(models[2]?.reasoning, true)
+    assert.equal(MODEL_REASONING["inclusionai/ling-3.0-flash-sante:free"], true)
+    assert.equal(MODEL_EFFORTS["inclusionai/ling-3.0-flash-sante:free"], undefined)
   })
 
   it("uses model-specific output limits from the CLI catalog", () => {
@@ -298,6 +313,11 @@ describe("commandCodeModelsFromApiResponse()", () => {
           id: "poolside/laguna-s-2.1-free",
           context_length: 256_000,
         },
+        {
+          ...API_RESPONSE.data[0],
+          id: "inclusionai/ling-3.0-flash-sante:free",
+          context_length: 262_144,
+        },
       ],
     })
 
@@ -307,9 +327,10 @@ describe("commandCodeModelsFromApiResponse()", () => {
         { id: "Qwen/Qwen3.8-27B", maxTokens: 32_768 },
         { id: "z-ai/glm-5.3-flash", maxTokens: 131_072 },
         { id: "poolside/laguna-s-2.1-free", maxTokens: 32_768 },
+        { id: "inclusionai/ling-3.0-flash-sante:free", maxTokens: 32_768 },
       ],
     )
-    assert.equal(Object.keys(MODEL_MAX_OUTPUT_TOKENS).length, 3)
+    assert.equal(Object.keys(MODEL_MAX_OUTPUT_TOKENS).length, 4)
   })
 
   it(`uses the command-code@${COMMAND_CODE_CLI_VERSION} reasoning effort catalog`, () => {
@@ -347,6 +368,14 @@ describe("commandCodeModelsFromApiResponse()", () => {
     assert.deepEqual(thinkingLevelMapForEfforts(MODEL_EFFORTS["deepseek/deepseek-v4-flash"]), {
       minimal: null,
       low: null,
+      medium: null,
+      high: "high",
+      xhigh: null,
+      max: "max",
+    })
+    assert.deepEqual(thinkingLevelMapForEfforts(MODEL_EFFORTS["deepseek/deepseek-v4.1-flash"]), {
+      minimal: null,
+      low: "low",
       medium: null,
       high: "high",
       xhigh: null,

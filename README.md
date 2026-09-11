@@ -80,7 +80,7 @@ Supported examples:
 
 ## Usage
 
-Open `/model` and select one of the models provided by Command Code. This fork intentionally exposes the eight models from the reviewed price table plus free models that are both marked `free` in the official CLI catalog and currently returned by the Provider API. The exact allowlist is maintained in [`src/commandcode-allowlist.ts`](src/commandcode-allowlist.ts), and is applied to live discovery, cache reads, and refreshes. Display names and context lengths still come from the live API.
+Open `/model` and select one of the models provided by Command Code. This fork intentionally exposes the nine models from the reviewed price table, including DeepSeek V4.1 Flash, plus the free models that are both marked `free` in the official CLI catalog and currently returned by the Provider API: `poolside/laguna-s-2.1-free`, `meituan/LongCat-2.0:free`, and `inclusionai/ling-3.0-flash-sante:free`. The exact allowlist is maintained in [`src/commandcode-allowlist.ts`](src/commandcode-allowlist.ts), and is applied to live discovery, cache reads, and refreshes. Display names and context lengths still come from the live API.
 
 ### Reasoning support
 
@@ -135,7 +135,7 @@ The following environment variables are intended for tests, local mocks, and com
 
 ## Image input
 
-The provider advertises image input only for models marked with the `image` input modality in the official Command Code CLI model catalog. The capability snapshot currently follows `command-code@1.38.2`; unknown models default to text-only until their upstream metadata is reviewed. A daily GitHub Actions job synchronizes the CLI version, image capabilities, reasoning flags, reasoning efforts, and model-specific output limits with the latest published CLI package and opens or updates a reviewable pull request when they change. Pricing remains manually reviewed because temporary promotions and long-context tiers require explicit review.
+The provider advertises image input only for models marked with the `image` input modality in the official Command Code CLI model catalog. The capability snapshot currently follows `command-code@1.53.0`; unknown models default to text-only until their upstream metadata is reviewed. A daily GitHub Actions job synchronizes the CLI version, image capabilities, reasoning flags, reasoning efforts, and model-specific output limits with the latest published CLI package and opens or updates a reviewable pull request when they change. Pricing remains manually reviewed because temporary promotions and long-context tiers require explicit review.
 
 For vision-capable models, Pi's native provider adapters forward image blocks from user messages and tool results using the documented OpenAI or Anthropic message schema. Unknown and text-only models remain marked text-only in Pi.
 

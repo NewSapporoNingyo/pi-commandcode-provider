@@ -12,12 +12,13 @@ export const COMMAND_CODE_ALLOWED_MODEL_IDS = [
   "tencent/hy3-paid",
   "Qwen/Qwen3.8-27B",
   "deepseek/deepseek-v4-flash",
+  "deepseek/deepseek-v4.1-flash",
   "moonshotai/Kimi-K2.7-Code",
   "MiniMaxAI/MiniMax-M3",
   "z-ai/glm-5.3-flash",
-  "minimax/minimax-m3-free",
-  "minimax/minimax-m2.7-free",
   "poolside/laguna-s-2.1-free",
+  "meituan/LongCat-2.0:free",
+  "inclusionai/ling-3.0-flash-sante:free",
 ] as const
 
 const commandCodeAllowedModelIds = new Set<string>(COMMAND_CODE_ALLOWED_MODEL_IDS)

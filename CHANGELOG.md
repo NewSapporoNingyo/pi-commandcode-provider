@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- Add `deepseek/deepseek-v4.1-flash` with its official text/image capability and selectable `low`, `high`, and `max` reasoning levels.
+- Refresh the free-model allowlist from the current official catalog and Provider API: keep Laguna S 2.1 and add LongCat 2.0 plus Ling 3.0 Flash Sante; remove no-longer-listed MiniMax free entries.
+- Synchronize static Command Code model capabilities with `command-code@1.53.0`.
+
 ## 0.6.0 - 2026-08-25
 
 - Allow switching from a vision-capable model to a text-only model by omitting historical image tool results while preserving their text output; direct image prompts still fail clearly.
