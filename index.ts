@@ -19,7 +19,7 @@ import { join } from "node:path"
 import { getConfiguredApiKey } from "./src/api-key.ts"
 import { pickCommandCodeApiKey, withResolvedCommandCodeApiKey } from "./src/converters.ts"
 import { createStreamCommandCode } from "./src/core.ts"
-import { calculateCommandCodeCost } from "./src/cost.ts"
+import { calculateCommandCodeCost, commandCodeCostRatesAt } from "./src/cost.ts"
 import {
   apiForModelId,
   baseUrlForModel,
@@ -198,7 +198,12 @@ export default async function (pi: ExtensionAPI) {
     createStream: () => new AssistantMessageEventStream(),
     streamProvider: (model, context, options) =>
       streamNativeProvider(
-        { ...model, api: apiForModelId(model.id), compat: model.compatConfig ?? model.compat },
+        {
+          ...model,
+          api: apiForModelId(model.id),
+          cost: commandCodeCostRatesAt(model.id, model.cost),
+          compat: model.compatConfig ?? model.compat,
+        },
         context,
         resolveStreamOptions(options),
       ),

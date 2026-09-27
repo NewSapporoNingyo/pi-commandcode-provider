@@ -198,7 +198,7 @@ export interface AssistantMessageEventStreamLike extends AsyncIterable<Assistant
 
 export interface CoreDependencies {
   createStream: () => AssistantMessageEventStreamLike
-  calculateCost: (model: ModelLike, usage: Usage) => void
+  calculateCost: (model: ModelLike, usage: Usage, atMs?: number) => void
   apiBase?: string
   fetchImpl?: typeof fetch
   authPaths?: readonly string[]

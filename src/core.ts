@@ -504,7 +504,7 @@ export function createStreamCommandCode(deps: CoreDependencies) {
                 output.usage.output +
                 output.usage.cacheRead +
                 output.usage.cacheWrite
-              deps.calculateCost(model, output.usage)
+              deps.calculateCost(model, output.usage, output.timestamp)
             }
             output.stopReason = mapFinishReason(event.finishReason)
             finished = true
