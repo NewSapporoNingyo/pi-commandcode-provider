@@ -2,8 +2,16 @@
 
 ## Unreleased
 
+## 0.7.3 - 2026-09-28
+
 - Register an Oh My Pi usage provider alongside the Command Code models, so OMP reports the account's 5-hour and weekly usage windows, credits remaining and used against the billing-period pool, and the current plan wherever it reads provider usage. The report is built from the same alpha endpoints and credentials `/commandcode-quota` uses rather than a second fetch, and sections the API does not report are listed as unavailable instead of being displayed as zero usage. pi has no `usage` field and ignores it ([#120](https://github.com/patlux/pi-commandcode-provider/pull/120)).
 - Apply DeepSeek V4 weekday peak pricing to estimated request costs from 01:00–04:00 and 06:00–10:00 UTC, while keeping weekends off-peak and using the same request-time rate selection on the native Provider API and legacy generate transports (#122).
+
+### Contributors
+
+- @aarisr — implemented the Oh My Pi usage-provider integration and contributed the underlying quota-surface changes (#120).
+- @pierreraby — co-authored and validated the Oh My Pi usage integration (#120).
+- @karaaslanz — implemented the DeepSeek V4 peak-pricing correction (#122).
 
 ## 0.7.3-next.0 - 2026-09-26
 
