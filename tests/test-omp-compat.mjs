@@ -10,7 +10,7 @@
 
 import assert from "node:assert/strict"
 import { spawn, spawnSync } from "node:child_process"
-import { accessSync, constants, mkdtempSync, rmSync } from "node:fs"
+import { accessSync, constants, mkdtempSync, rmSync, writeFileSync } from "node:fs"
 import { createServer } from "node:http"
 import { tmpdir } from "node:os"
 import { delimiter, dirname, join, resolve } from "node:path"
@@ -50,6 +50,8 @@ if (!OMP_BIN) {
 }
 
 const tempHome = mkdtempSync(join(tmpdir(), "omp-cc-home-"))
+const modelsConfigPath = join(tempHome, "mock-models.ini")
+writeFileSync(modelsConfigPath, `[models]\n${TEST_MODEL} = true\nQwen/Qwen3.7-Max = true\n`)
 let requestCount = 0
 let modelListRequestCount = 0
 let lastRequestBody
@@ -188,6 +190,7 @@ function ompEnv(overrides = {}) {
     COMMAND_CODE_API_KEY: "mock-key",
     COMMANDCODE_API_BASE: `${apiBase}/provider/v1`,
     COMMANDCODE_MODELS_URL: `${apiBase}/provider/v1/models`,
+    COMMANDCODE_MODELS_CONFIG: modelsConfigPath,
   }
   for (const [key, value] of Object.entries(overrides)) {
     if (value === undefined) delete env[key]

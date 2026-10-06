@@ -1,4 +1,5 @@
 import type { CommandCodeModel, LoadCommandCodeModelsResult } from "./models.ts"
+import { filterSelectedModels } from "./model-selection.ts"
 
 export interface CommandCodeUi {
   notify(message: string, type?: "info" | "warning" | "error"): void
@@ -6,6 +7,7 @@ export interface CommandCodeUi {
 
 export interface CommandCodeCommandContext {
   ui: CommandCodeUi
+  model?: { provider: string; id: string }
   waitForIdle?: () => Promise<void>
 }
 
@@ -26,9 +28,14 @@ export interface CommandCodeRuntimeApi<
 export interface CommandCodeRuntimeOptions<TProviderConfig> {
   endpoint: string
   cachePath: string
-  loadModels: (signal: AbortSignal) => Promise<LoadCommandCodeModelsResult>
+  configPath: string
+  loadSelection: () => Promise<ReadonlySet<string>>
+  loadModels: (
+    signal: AbortSignal,
+    enabledModelIds: ReadonlySet<string>,
+  ) => Promise<LoadCommandCodeModelsResult>
   /** Cached catalog only; resolves to an empty list when no valid cache exists. */
-  loadCachedModels: () => Promise<readonly CommandCodeModel[]>
+  loadCachedModels: (enabledModelIds: ReadonlySet<string>) => Promise<readonly CommandCodeModel[]>
   createProviderConfig: (models: readonly CommandCodeModel[]) => TProviderConfig
   getTransport?: () => "unknown" | "provider" | "generate"
   now?: () => number
@@ -42,6 +49,9 @@ export interface CommandCodeRuntimeStatus {
   lastSuccess?: number
   lastAttempt?: number
   cachePath: string
+  configPath: string
+  enabledCount: number
+  unavailableModelIds: readonly string[]
   endpoint: string
   warning?: string
   refreshing: boolean
@@ -96,6 +106,9 @@ export function formatCommandCodeStatus(status: CommandCodeRuntimeStatus): strin
     `last success: ${formatTimestamp(status.lastSuccess)}`,
     `last attempt: ${formatTimestamp(status.lastAttempt)}`,
     `cache path: ${status.cachePath}`,
+    `config path: ${status.configPath}`,
+    `enabled count: ${status.enabledCount}`,
+    `unavailable model IDs: ${status.unavailableModelIds.join(", ") || "none"}`,
     `endpoint: ${redactEndpoint(status.endpoint)}`,
     `refresh: ${status.refreshing ? "in progress" : "idle"}`,
   ]
@@ -109,6 +122,13 @@ export class CommandCodeRuntime<TProviderConfig, TContext extends CommandCodeCom
   private readonly logWarning: (message: string) => void
   private status: CommandCodeRuntimeStatus
   private providerRegistered = false
+  private models: readonly CommandCodeModel[] = []
+  private enabledModelIds: ReadonlySet<string> = new Set()
+  private context: CommandCodeCommandContext | undefined
+  private diagnosticWarning: string | undefined
+  private notifiedWarning: string | undefined
+  private notifiedUnavailable: string | undefined
+  private notifiedSelection: string | undefined
   private refreshPromise: Promise<CommandCodeRefreshResult> | undefined
   private readonly shutdown = new AbortController()
 
@@ -117,13 +137,16 @@ export class CommandCodeRuntime<TProviderConfig, TContext extends CommandCodeCom
     private readonly options: CommandCodeRuntimeOptions<TProviderConfig>,
   ) {
     this.now = options.now ?? Date.now
-    // Direct console output corrupts the host TUI; warnings remain in /commandcode-status.
+    // Direct console output corrupts the host TUI; attachContext supplies its UI later.
     this.logWarning = options.logWarning ?? (() => {})
     const initialStatus: CommandCodeRuntimeStatus = {
       transport: "unknown",
       source: "empty",
       modelCount: 0,
       cachePath: options.cachePath,
+      configPath: options.configPath,
+      enabledCount: 0,
+      unavailableModelIds: [],
       endpoint: options.endpoint,
       refreshing: false,
     }
@@ -133,6 +156,7 @@ export class CommandCodeRuntime<TProviderConfig, TContext extends CommandCodeCom
   getStatus(): CommandCodeRuntimeStatus {
     return {
       ...this.status,
+      unavailableModelIds: [...this.status.unavailableModelIds],
       transport: this.options.getTransport?.() ?? "unknown",
     }
   }
@@ -144,22 +168,81 @@ export class CommandCodeRuntime<TProviderConfig, TContext extends CommandCodeCom
    */
   async initialize(): Promise<void> {
     this.registerCommands()
-
-    const cached = await this.options.loadCachedModels()
+    if (!(await this.reloadSelection())) return
+    if (this.enabledModelIds.size === 0) {
+      this.registerModels([])
+      return
+    }
+    const cached = await this.options.loadCachedModels(this.enabledModelIds)
     if (cached.length === 0) {
       await this.refresh()
       return
     }
 
-    this.pi.registerProvider("commandcode", this.options.createProviderConfig(cached))
-    this.providerRegistered = true
+    this.registerModels(cached)
     this.status = {
       ...this.status,
       source: "cache",
-      modelCount: cached.length,
       lastSuccess: this.now(),
     }
     void this.refresh()
+  }
+
+  /** Session startup may happen after discovery; deliver its pending warning once UI exists. */
+  attachContext(context: CommandCodeCommandContext): void {
+    this.context = context
+    this.notifyWarning()
+    this.notifyRemovedSelection()
+  }
+
+  private registerModels(models: readonly CommandCodeModel[]): boolean {
+    const selected = filterSelectedModels(models, this.enabledModelIds)
+    if (this.providerRegistered && JSON.stringify(selected) === JSON.stringify(this.models))
+      return false
+    this.pi.registerProvider("commandcode", this.options.createProviderConfig(selected))
+    this.models = selected
+    this.providerRegistered = true
+    this.status = { ...this.status, modelCount: selected.length }
+    this.notifyRemovedSelection()
+    return true
+  }
+
+  private notifyRemovedSelection(): void {
+    const model = this.context?.model
+    if (
+      !this.providerRegistered ||
+      model?.provider !== "commandcode" ||
+      this.models.some((entry) => entry.id === model.id)
+    ) {
+      this.notifiedSelection = undefined
+      return
+    }
+    if (this.notifiedSelection === model.id) return
+    this.context?.ui.notify(
+      `The selected Command Code model ${model.id} is disabled or unavailable. Select another model with /model.`,
+      "warning",
+    )
+    this.notifiedSelection = model.id
+  }
+
+  private async reloadSelection(): Promise<boolean> {
+    try {
+      this.enabledModelIds = new Set(await this.options.loadSelection())
+      this.status = {
+        ...this.status,
+        enabledCount: this.enabledModelIds.size,
+        unavailableModelIds: this.status.unavailableModelIds.filter((id) =>
+          this.enabledModelIds.has(id),
+        ),
+      }
+      // Even an offline refresh must remove newly disabled models immediately.
+      if (this.providerRegistered) this.registerModels(this.models)
+      return true
+    } catch (error) {
+      if (!this.providerRegistered) this.registerModels([])
+      this.setWarning(errorMessage(error))
+      return false
+    }
   }
 
   /** Aborts any background refresh so a stopping host does not wait for the network. */
@@ -185,98 +268,93 @@ export class CommandCodeRuntime<TProviderConfig, TContext extends CommandCodeCom
     }
 
     try {
-      const loaded = await this.options.loadModels(this.shutdown.signal)
-      const warning = loaded.warning ? redactDiagnosticText(loaded.warning) : undefined
-
-      const shouldRegister =
-        !this.providerRegistered ||
-        loaded.source === "live" ||
-        (this.status.modelCount === 0 && loaded.models.length > 0)
-
-      if (shouldRegister) {
-        this.pi.registerProvider("commandcode", this.options.createProviderConfig(loaded.models))
-        this.providerRegistered = true
-
-        if (loaded.models.length === 0) {
-          const preservedWarning = warning ?? "Model catalog refresh returned no models"
-          this.status = {
-            ...this.status,
-            source: loaded.source,
-            modelCount: 0,
-            warning: preservedWarning,
-            refreshing: false,
-          }
-          this.warn(preservedWarning)
-          return {
-            refreshed: false,
-            source: loaded.source,
-            modelCount: 0,
-            warning: preservedWarning,
-          }
-        }
-
+      if (!(await this.reloadSelection())) return this.result(false)
+      if (this.shutdown.signal.aborted) return this.result(false)
+      if (this.enabledModelIds.size === 0) {
+        this.registerModels([])
+        this.status = { ...this.status, source: "empty", unavailableModelIds: [] }
+        this.setWarning(undefined)
+        return this.result(true)
+      }
+      const loaded = await this.options.loadModels(this.shutdown.signal, this.enabledModelIds)
+      if (this.shutdown.signal.aborted) return this.result(false)
+      if (loaded.source === "live") {
+        this.registerModels(loaded.models)
+        const available = new Set(this.models.map((model) => model.id))
         this.status = {
           ...this.status,
-          source: loaded.source,
-          modelCount: loaded.models.length,
+          source: "live",
           lastSuccess: this.now(),
-          warning,
-          refreshing: false,
+          unavailableModelIds: [...this.enabledModelIds].filter((id) => !available.has(id)).sort(),
         }
-        if (warning) this.warn(warning)
-        return {
-          refreshed: true,
-          source: loaded.source,
-          modelCount: loaded.models.length,
-          warning,
-        }
+        this.setWarning(loaded.warning)
+        return this.result(true)
       }
-
-      const preservedWarning = warning ?? "Model catalog refresh returned no models"
-      this.status = {
-        ...this.status,
-        warning: preservedWarning,
-        refreshing: false,
-      }
-      this.warn(preservedWarning)
-      return {
-        refreshed: false,
-        source: this.status.source,
-        modelCount: this.status.modelCount,
-        warning: preservedWarning,
-      }
-    } catch (error) {
-      if (this.shutdown.signal.aborted) {
-        this.status = { ...this.status, refreshing: false }
-        return {
-          refreshed: false,
-          source: this.status.source,
-          modelCount: this.status.modelCount,
-        }
-      }
-      const warning = redactDiagnosticText(
-        `Could not refresh the Command Code model catalog: ${errorMessage(error)}`,
+      // Preserve newer in-memory entries and known removals if the cache write failed.
+      const fallback = new Map(
+        loaded.models
+          .filter((model) => !this.status.unavailableModelIds.includes(model.id))
+          .map((model) => [model.id, model]),
       )
-      this.status = {
-        ...this.status,
-        warning,
-        refreshing: false,
+      for (const model of this.models) fallback.set(model.id, model)
+      const changed = this.registerModels([...fallback.values()])
+      if (this.status.source !== "live" && loaded.source === "cache") {
+        this.status = { ...this.status, source: "cache" }
       }
-      this.warn(warning)
-      return {
-        refreshed: false,
-        source: this.status.source,
-        modelCount: this.status.modelCount,
-        warning,
+      this.setWarning(loaded.warning)
+      return this.result(changed && this.models.length > 0)
+    } catch (error) {
+      if (!this.shutdown.signal.aborted) {
+        if (!this.providerRegistered) this.registerModels([])
+        this.setWarning(`Could not refresh the Command Code model catalog: ${errorMessage(error)}`)
       }
+      return this.result(false)
+    } finally {
+      this.status = { ...this.status, refreshing: false }
     }
   }
 
-  private warn(message: string): void {
+  private unavailableWarning(): string | undefined {
+    return this.status.unavailableModelIds.length > 0
+      ? `Enabled Command Code models unavailable in the latest successful Provider API catalog: ${this.status.unavailableModelIds.join(", ")}.`
+      : undefined
+  }
+
+  private result(refreshed: boolean): CommandCodeRefreshResult {
+    return {
+      refreshed,
+      source: this.status.source,
+      modelCount: this.status.modelCount,
+      warning: this.status.warning,
+    }
+  }
+
+  private setWarning(message: string | undefined): void {
+    this.diagnosticWarning = message ? redactDiagnosticText(message) : undefined
+    const unavailable = this.unavailableWarning()
+    const warning = [this.diagnosticWarning, unavailable].filter(Boolean).join(" ") || undefined
+    const changed = warning !== this.status.warning
+    this.status = { ...this.status, warning }
+    if (!this.diagnosticWarning) this.notifiedWarning = undefined
+    if (!unavailable) this.notifiedUnavailable = undefined
     try {
-      this.logWarning(redactDiagnosticText(message))
+      if (warning && changed) this.logWarning(warning)
+      this.notifyWarning()
     } catch {
       // Diagnostics must never make a catalog refresh fail.
+    }
+  }
+
+  private notifyWarning(): void {
+    if (!this.context) return
+    if (this.diagnosticWarning && this.diagnosticWarning !== this.notifiedWarning) {
+      this.context.ui.notify(this.diagnosticWarning, "warning")
+      this.notifiedWarning = this.diagnosticWarning
+    }
+    const unavailable = this.unavailableWarning()
+    if (unavailable && unavailable !== this.notifiedUnavailable) {
+      this.context.ui.notify(unavailable, "warning")
+      this.notifiedUnavailable = unavailable
     }
   }
 
@@ -285,6 +363,10 @@ export class CommandCodeRuntime<TProviderConfig, TContext extends CommandCodeCom
       description: "Refresh the Command Code model catalog",
       handler: async (_args, ctx) => {
         await ctx.waitForIdle?.()
+        this.attachContext(ctx)
+        // A manual refresh re-reads the INI after an older background refresh finishes.
+        // Other overlapping refreshes still share their existing request.
+        if (this.refreshPromise) await this.refreshPromise
         const result = await this.refresh()
         if (result.refreshed) {
           ctx.ui.notify(
@@ -293,8 +375,8 @@ export class CommandCodeRuntime<TProviderConfig, TContext extends CommandCodeCom
           )
         } else {
           ctx.ui.notify(
-            `Command Code model catalog unchanged (${result.modelCount} models remain available).${result.warning ? ` ${result.warning}` : ""}`,
-            "warning",
+            `Command Code model catalog unchanged (${result.modelCount} models remain available).`,
+            result.warning ? "warning" : "info",
           )
         }
       },

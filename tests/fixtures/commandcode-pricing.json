@@ -1,5 +1,7 @@
 {
   "verifiedAt": "2026-09-29",
+  "additionsVerifiedAt": "2026-10-06",
+  "additionsSource": "https://commandcode.ai/docs/plans/goat",
   "source": "https://commandcode.ai/docs/resources/pricing-limits",
   "tierPolicy": "Use request-wide input tiers; the highest threshold exceeded by input plus cache tokens applies to the full request.",
   "tiers": {
@@ -18,6 +20,8 @@
     "xai/grok-4.7": [[200000, 4, 12, 1, 0]]
   },
   "costs": {
+    "deepseek/deepseek-v4.1-flash-fast": [0.16, 0.58, 0.016, 0],
+    "inclusionai/ling-3.1-flash:free": [0, 0, 0, 0],
     "inclusionai/ling-3.0-flash-sante:free": [0, 0, 0, 0],
     "poolside/laguna-s-2.1-free": [0, 0, 0, 0],
     "stealth/space-bunny-alpha": [0, 0, 0, 0],

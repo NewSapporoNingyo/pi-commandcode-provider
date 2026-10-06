@@ -321,6 +321,11 @@ const apiBase = `http://127.0.0.1:${port}`
 
 const tempHome = mkdtempSync(join(tmpdir(), "pi-cc-home-"))
 const agentDir = join(tempHome, "custom-pi-agent")
+const modelsConfigPath = join(tempHome, "mock-models.ini")
+writeFileSync(
+  modelsConfigPath,
+  `[models]\n${[TEST_MODEL, CLAUDE_TEST_MODEL, RESPONSES_TEST_MODEL, "cc-second-model", "cc-refreshed-model"].map((id) => `${id} = true`).join("\n")}\n`,
+)
 mkdirSync(agentDir, { recursive: true })
 writeFileSync(
   join(agentDir, "settings.json"),
@@ -336,6 +341,7 @@ const env = {
   COMMAND_CODE_API_KEY: "mock-key",
   CMD_ZDR: "1",
   COMMANDCODE_MODELS_URL: `${apiBase}/provider/v1/models`,
+  COMMANDCODE_MODELS_CONFIG: modelsConfigPath,
 }
 
 function runPi(args, timeoutOrOptions = 30_000) {

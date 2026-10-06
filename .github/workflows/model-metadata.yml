@@ -4,6 +4,9 @@ on:
   pull_request:
     branches: [main]
     paths:
+      - "commandcode-models.ini"
+      - "src/model-selection.ts"
+      - "tests/test-model-selection.ts"
       - ".github/scripts/check-commandcode-model-metadata.ts"
       - ".github/workflows/model-metadata.yml"
       - "README.md"
@@ -79,7 +82,9 @@ jobs:
           body: |
             Automated synchronization with the latest published `command-code` CLI package.
 
-            This updates only machine-readable compatibility metadata:
+            Only models enabled in commandcode-models.ini are synchronized. Disabled and missing entries are retained; CLI version-only changes do not create a diff.
+
+            This updates machine-readable compatibility metadata when enabled models change:
             - CLI version used in the `x-command-code-version` header
             - image-input capabilities
             - reasoning capability and selectable effort levels

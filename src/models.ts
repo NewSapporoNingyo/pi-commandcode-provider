@@ -1,5 +1,6 @@
 import { mkdir, readFile, readdir, rename, rm, stat, writeFile } from "node:fs/promises"
 import { basename, dirname, join } from "node:path"
+import { selectModelEntries } from "./model-selection.ts"
 
 import { MODEL_EFFORT_OVERRIDES } from "./commandcode-catalog-overrides.ts"
 import {
@@ -167,6 +168,7 @@ export function baseUrlForModel(apiBase: string, api: CommandCodeApi): string {
 }
 
 interface FetchCommandCodeModelsOptions {
+  enabledModelIds?: ReadonlySet<string>
   url?: string
   fetchImpl?: typeof fetch
   signal?: AbortSignal
@@ -248,11 +250,6 @@ function parseCachedModel(value: unknown): CommandCodeModel {
     contextWindow,
     maxTokens: maxOutputTokensForModel(id, contextWindow),
   }
-}
-
-function requireModels(models: readonly CommandCodeModel[]): readonly CommandCodeModel[] {
-  if (models.length === 0) throw new Error("Command Code returned an empty model catalog")
-  return models
 }
 
 function errorMessage(error: unknown): string {
@@ -338,31 +335,39 @@ function runWithTimeout<T>(
   })
 }
 
-export function commandCodeModelsFromApiResponse(value: unknown): readonly CommandCodeModel[] {
+export function commandCodeModelsFromApiResponse(
+  value: unknown,
+  enabledModelIds?: ReadonlySet<string>,
+): readonly CommandCodeModel[] {
   if (!isRecord(value)) throw new Error("Expected models response to be an object")
   if (value.object !== "list") throw new Error("Expected models response object to be 'list'")
 
   const data = value.data
   if (!Array.isArray(data)) throw new Error("Expected models response data to be an array")
 
-  return data.map(parseApiModel).map((model) => ({
-    id: model.id,
-    name: `${model.name} (CC)`,
-    api: apiForModelId(model.id, model.supportedEndpoints),
-    reasoning: isReasoningModel(model.id),
-    contextWindow: model.contextLength,
-    maxTokens: maxOutputTokensForModel(model.id, model.contextLength),
-  }))
+  return selectModelEntries(data, enabledModelIds)
+    .map(parseApiModel)
+    .map((model) => ({
+      id: model.id,
+      name: `${model.name} (CC)`,
+      api: apiForModelId(model.id, model.supportedEndpoints),
+      reasoning: isReasoningModel(model.id),
+      contextWindow: model.contextLength,
+      maxTokens: maxOutputTokensForModel(model.id, model.contextLength),
+    }))
 }
 
-export function commandCodeModelsFromCache(value: unknown): readonly CommandCodeModel[] {
+export function commandCodeModelsFromCache(
+  value: unknown,
+  enabledModelIds?: ReadonlySet<string>,
+): readonly CommandCodeModel[] {
   if (!isRecord(value)) throw new Error("Expected model cache to be an object")
   if (value.version !== MODEL_CACHE_VERSION) {
     throw new Error(`Expected model cache version ${MODEL_CACHE_VERSION}`)
   }
   if (!Array.isArray(value.models)) throw new Error("Expected cached models to be an array")
 
-  return requireModels(value.models.map(parseCachedModel))
+  return selectModelEntries(value.models, enabledModelIds).map(parseCachedModel)
 }
 
 export async function fetchCommandCodeModels(
@@ -390,21 +395,25 @@ export async function fetchCommandCodeModels(
     configuredTimeoutMs(options.timeoutMs),
     options.signal,
   )
-  return requireModels(commandCodeModelsFromApiResponse(body))
+  return commandCodeModelsFromApiResponse(body, options.enabledModelIds)
 }
 
-async function readCommandCodeModelsCache(cachePath: string): Promise<readonly CommandCodeModel[]> {
+async function readCommandCodeModelsCache(
+  cachePath: string,
+  enabledModelIds?: ReadonlySet<string>,
+): Promise<readonly CommandCodeModel[]> {
   const contents = await readFile(cachePath, "utf-8")
   const parsed: unknown = JSON.parse(contents)
-  return commandCodeModelsFromCache(parsed)
+  return commandCodeModelsFromCache(parsed, enabledModelIds)
 }
 
 /** Reads the cached catalog without touching the network; empty when missing or invalid. */
 export async function loadCachedCommandCodeModels(
   cachePath: string,
+  enabledModelIds?: ReadonlySet<string>,
 ): Promise<readonly CommandCodeModel[]> {
   try {
-    return await readCommandCodeModelsCache(cachePath)
+    return await readCommandCodeModelsCache(cachePath, enabledModelIds)
   } catch {
     return []
   }
@@ -498,7 +507,7 @@ export async function loadCommandCodeModels(
     if (options.signal?.aborted) throw abortError(options.signal.reason ?? liveError)
 
     try {
-      const models = await readCommandCodeModelsCache(cachePath)
+      const models = await readCommandCodeModelsCache(cachePath, options.enabledModelIds)
       return {
         models,
         source: "cache",

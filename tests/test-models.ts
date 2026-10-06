@@ -377,8 +377,8 @@ describe("commandCodeModelsFromCache()", () => {
     assert.equal(cached[0]?.reasoning, true)
   })
 
-  it("rejects empty, invalid, and unsupported caches", () => {
-    assert.throws(() => commandCodeModelsFromCache({ version: 2, models: [] }))
+  it("accepts an empty catalog and rejects invalid or unsupported caches", () => {
+    assert.deepEqual(commandCodeModelsFromCache({ version: 2, models: [] }), [])
     assert.throws(() => commandCodeModelsFromCache({ version: 1, models: EXPECTED_MODELS }))
     assert.throws(() =>
       commandCodeModelsFromCache({

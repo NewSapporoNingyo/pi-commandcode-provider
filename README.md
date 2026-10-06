@@ -84,6 +84,25 @@ Supported examples:
 
 Open `/model` and select one of the models provided by Command Code. Model availability changes over time and is refreshed from the Provider API when the extension loads.
 
+### Model selection
+
+Edit `commandcode-models.ini` in this plugin's directory, then run `/commandcode-refresh` or restart pi. The same file is included in the npm package. `/commandcode-status` shows its resolved path.
+
+```ini
+[models]
+gpt-5.6-sol = true
+google/gemini-3.8-flash = true
+xiaomi/mimo-v2.6-pro = false
+```
+
+Only exact, case-sensitive IDs set to `true` appear in the model picker. Entries set to `false` and unlisted IDs are disabled. You can add a new model's exact Provider API ID to enable it. The file supports UTF-8 (including BOM), LF or CRLF, blank lines, and whole-line `;` or `#` comments. Duplicate IDs, unknown sections and values other than `true` or `false` produce a file-and-line warning. An empty `[models]` section disables every Command Code model.
+
+The initial selection enables 17 models: models included in the [GOAT plan](https://commandcode.ai/docs/plans/goat) with at least $40 in monthly credits, plus its three free models, as verified on 2026-10-06. Each group is annotated in the INI. Kimi K3 is enabled at its temporary $60 allowance through 2026-10-07; its switch does not change automatically when the promotion ends. Future models stay disabled until you explicitly enable them. Refresh and metadata synchronization never rewrite your INI. Because the file lives inside the plugin, preserve your edits when updating or replacing the package; `COMMANDCODE_MODELS_CONFIG` can point to an independent INI instead.
+
+Online refreshes remove enabled models missing from the latest valid Provider API list and display a warning naming them. Their INI switches stay enabled, so they return if upstream restores them. Disabled models' additions, removals or malformed details are ignored. Network or response failures use the last valid filtered catalog and do not establish that a model was delisted. Disabling models works offline; a newly enabled model absent from the cache needs a successful online refresh.
+
+A missing or invalid INI at startup leaves Command Code with no selectable models and a warning. An invalid edit during a running session preserves the last valid selection until corrected and refreshed. If the current model is removed, the plugin asks you to select another model with `/model`; it does not select a replacement for you.
+
 Other extensions that stream with the active Command Code model, such as background agents or memory workers, use the same connection and the same credentials as the chat, so their requests count against your Command Code usage.
 
 ### Endpoint selection
@@ -126,14 +145,14 @@ The provider fetches the current model catalog from:
 https://api.commandcode.ai/provider/v1/models
 ```
 
-The last successful catalog is cached at `<agent-dir>/commandcode-models.json`. For pi this is `~/.pi/agent/commandcode-models.json` by default. Compatible hosts such as OMP use their own agent directory.
+The last successful selected catalog is cached at `<agent-dir>/commandcode-models.json`. For pi this is `~/.pi/agent/commandcode-models.json` by default. Compatible hosts such as OMP use their own agent directory.
 
-When a valid cache exists, the provider registers the cached catalog immediately and refreshes it from the endpoint in the background, so startup does not wait for the network. The refreshed catalog replaces the cached one as soon as it arrives; `/commandcode-status` reports `source: cache` until then. If the endpoint is temporarily unavailable, the cached catalog stays active. On a first start without a cache, the provider waits for the live catalog; if that fails offline, pi still loads, but Command Code models remain unavailable until the connection is restored and `/commandcode-refresh` succeeds.
+When a valid cache exists, the provider filters it through the INI and registers the selected models immediately and refreshes it from the endpoint in the background, so startup does not wait for the network. The refreshed catalog replaces the cached one as soon as it arrives; `/commandcode-status` reports `source: cache` until then. If the endpoint is temporarily unavailable, the cached catalog stays active. On a first start without a cache, the provider waits for the live catalog; if that fails offline, pi still loads, but Command Code models remain unavailable until the connection is restored and `/commandcode-refresh` succeeds.
 
 While pi is running, use these provider commands without restarting:
 
-- `/commandcode-refresh` fetches and re-registers the current model catalog. Overlapping refreshes are coalesced, and a failed refresh keeps the last valid catalog active.
-- `/commandcode-status` shows redacted discovery diagnostics, including the source, model count, timestamps, cache path, endpoint, and warning.
+- `/commandcode-refresh` re-reads the INI and fetches the current model catalog. A manual refresh waits for older background discovery before reading the configuration. Other overlapping refreshes are coalesced. The selection is applied even offline, and unchanged selected metadata does not re-register the provider.
+- `/commandcode-status` shows redacted discovery diagnostics, including the source, model count, timestamps, cache path, INI path, enabled count, unavailable IDs, endpoint, and warning. Pending startup warnings are shown when the session UI is ready.
 - `/commandcode-quota` shows your Command Code account usage and quota in a dashboard-style layout: credits remaining and used with a percentage, monthly/purchased/free sources, the current plan, available usage totals, the API key name, and the 5-hour and weekly usage windows.
 
 The `commandcode-quota` command reads from the Command Code alpha usage endpoints (the same ones the `cmd` CLI `/usage` command uses): `whoami`, `billing/credits`, `billing/subscriptions`, and `usage/summary`. It authenticates with the same API key the provider already uses. If the command cannot reach those endpoints or an endpoint schema changes, unavailable sections are reported explicitly instead of being displayed as zero usage. Output is plain text (via `ui.notify`) so it works across pi and compatible hosts such as OMP.
@@ -151,11 +170,11 @@ The following environment variables are intended for tests, local mocks, and com
 
 ## Image input
 
-The provider advertises image input only for models marked with the `image` input modality in the official Command Code CLI model catalog. The capability snapshot currently follows `command-code@1.72.4`; unknown models default to text-only until their upstream metadata is reviewed. A daily GitHub Actions job synchronizes the CLI version, image capabilities, reasoning flags, reasoning efforts, and model-specific output limits with the latest published CLI package, also dropping manual effort overrides that upstream has published itself, and opens or updates a reviewable pull request when they change. Pricing remains manually reviewed because temporary promotions and long-context tiers require explicit review.
+The provider advertises image input only for models marked with the `image` input modality in the official Command Code CLI model catalog. The capability snapshot currently follows `command-code@1.72.4`; unknown models default to text-only until their upstream metadata is reviewed. The daily GitHub Actions job and `check:commandcode-catalog` / `sync:commandcode-catalog` read the same INI. They compare and synchronize only enabled models' image capabilities, reasoning flags, efforts and output limits. Disabled or upstream-missing entries retain their existing metadata; missing enabled CLI entries produce a warning distinct from Provider API availability. A CLI version change alone is informational and writes no files. The snapshot version and enabled manual effort overrides are updated only when selected capabilities change. The job opens or updates a reviewable pull request for those changes. Pricing remains manually reviewed because temporary promotions and long-context tiers require explicit review.
 
 For vision-capable models, Pi's native provider adapters forward image blocks from user messages and tool results using the documented OpenAI or Anthropic message schema. Unknown and text-only models remain marked text-only in Pi.
 
-The legacy generate transport resolves image support from the host's `model.input` when the host supplies it, and falls back to the capability snapshot otherwise. Because the snapshot is generated from a single CLI release, a host that marks a model as `["text", "image"]` — for example through a `models.yml` or `models.json` model override — can send images on both transports before the catalog catches up. A host that narrows a catalogued vision model to text is likewise honored.
+The legacy generate transport resolves image support from the host's `model.input` when the host supplies it, and falls back to the capability snapshot otherwise. Because newly enabled models may not yet have synchronized metadata, a host that marks a model as `["text", "image"]` — for example through a `models.yml` or `models.json` model override — can send images on both transports before the catalog catches up. A host that narrows a catalogued vision model to text is likewise honored.
 
 ## Pricing display
 

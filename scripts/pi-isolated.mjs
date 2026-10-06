@@ -63,7 +63,7 @@ try {
       "--provider",
       "commandcode",
       "--model",
-      "gpt-5.6-luna",
+      "gpt-5.6-sol",
       ...process.argv.slice(2),
     ])
   }

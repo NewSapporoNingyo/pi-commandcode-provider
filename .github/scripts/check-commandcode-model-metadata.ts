@@ -5,6 +5,7 @@ import { join, resolve } from "node:path"
 import { pathToFileURL } from "node:url"
 import { promisify } from "node:util"
 import ts from "typescript"
+import { getCommandCodeModelsConfigPath, loadModelSelection } from "../../src/model-selection.ts"
 
 import {
   COMMAND_CODE_CLI_VERSION,
@@ -18,7 +19,7 @@ const execFileAsync = promisify(execFile)
 const MODELS_REFERENCE_PATH = "dist/bundled/command-code-knowledge/reference/models.md"
 const CLI_BUNDLE_PATH = "dist/cli.mjs"
 const TEXT_ONLY_MARKER = ',__name(isKnownTextOnlyModel,"isKnownTextOnlyModel")'
-const VALID_EFFORTS = new Set(["minimal", "low", "medium", "high", "xhigh", "max"])
+const VALID_EFFORTS = new Set(["off", "minimal", "low", "medium", "high", "xhigh", "max"])
 
 function quoteWindowsArgument(argument: string): string {
   if (argument.length === 0) return '""'
@@ -80,7 +81,11 @@ function sorted(values: Iterable<string>): string[] {
   return [...values].sort((left, right) => left.localeCompare(right))
 }
 
-function parsePackedPackage(value: unknown): PackedPackage {
+export function parsePackedPackage(value: unknown): PackedPackage {
+  // New npm releases key pack results by package name instead of using an array.
+  if (isRecord(value) && Object.keys(value).length === 1 && isRecord(value["command-code"])) {
+    value = [value["command-code"]]
+  }
   if (!Array.isArray(value) || value.length !== 1 || !isRecord(value[0])) {
     throw new Error("Expected npm pack to return one package")
   }
@@ -94,24 +99,31 @@ function parsePackedPackage(value: unknown): PackedPackage {
 }
 
 export function parsePackageVersion(value: unknown): string {
+  // npm versions differ in whether a single tag match is wrapped in an array.
+  if (Array.isArray(value) && value.length === 1) value = value[0]
   if (typeof value !== "string" || !/^\d+\.\d+\.\d+(?:[-+].+)?$/.test(value)) {
     throw new Error("Expected npm view to return one semantic version")
   }
   return value
 }
 
-export function parseModelsReference(markdown: string): {
+export function parseModelsReference(
+  markdown: string,
+  enabledModelIds?: ReadonlySet<string>,
+): {
   modelIds: readonly string[]
   reasoningEfforts: Readonly<Record<string, readonly string[]>>
 } {
   const modelIds = new Set<string>()
   const reasoningEfforts: Record<string, readonly string[]> = {}
+  let catalogRows = 0
 
   for (const line of markdown.split("\n")) {
     const match = /^\| `([^`]+)` \| [^|]* \| [^|]* \| ([^|]*) \|/.exec(line)
     if (!match) continue
-
+    catalogRows += 1
     const modelId = match[1]
+    if (enabledModelIds && !enabledModelIds.has(modelId!)) continue
     const effortsColumn = match[2]?.trim()
     if (!modelId || !effortsColumn) throw new Error(`Could not parse model row: ${line}`)
     if (modelIds.has(modelId)) throw new Error(`Duplicate model id in reference: ${modelId}`)
@@ -123,10 +135,13 @@ export function parseModelsReference(markdown: string): {
     if (efforts.length === 0 || efforts.some((effort) => !VALID_EFFORTS.has(effort))) {
       throw new Error(`Unexpected reasoning efforts for ${modelId}: ${effortsColumn}`)
     }
-    reasoningEfforts[modelId] = efforts
+    // pi exposes "off" separately and the provider omits reasoning_effort for it.
+    // The CLI now lists that switch alongside its selectable reasoning depths.
+    const depths = efforts.filter((effort) => effort !== "off")
+    if (depths.length > 0) reasoningEfforts[modelId] = depths
   }
 
-  if (modelIds.size === 0) throw new Error("No model rows found in Command Code reference")
+  if (catalogRows === 0) throw new Error("No model rows found in Command Code reference")
 
   return {
     modelIds: sorted(modelIds),
@@ -136,7 +151,10 @@ export function parseModelsReference(markdown: string): {
   }
 }
 
-export function parseKnownTextOnlyModelIds(bundle: string): readonly string[] {
+export function parseKnownTextOnlyModelIds(
+  bundle: string,
+  enabledModelIds?: ReadonlySet<string>,
+): readonly string[] {
   const markerIndex = bundle.indexOf(TEXT_ONLY_MARKER)
   if (markerIndex < 0) {
     throw new Error("Could not find Command Code's isKnownTextOnlyModel catalog")
@@ -149,6 +167,9 @@ export function parseKnownTextOnlyModelIds(bundle: string): readonly string[] {
   const arrayEnd = markerIndex - 1
   const literal = bundle.slice(arrayStart, arrayEnd)
   const parsed: unknown = JSON.parse(literal)
+  if (enabledModelIds && Array.isArray(parsed)) {
+    return sorted(new Set(parsed.filter((id) => typeof id === "string" && enabledModelIds.has(id))))
+  }
   if (!isStringArray(parsed)) throw new Error("Expected the text-only model catalog to be strings")
 
   return sorted(new Set(parsed))
@@ -216,9 +237,12 @@ export function parseBundleModelCapabilities(
 export function commandCodeModelMetadataFromContents(
   modelsReference: string,
   cliBundle: string,
+  enabledModelIds?: ReadonlySet<string>,
 ): CommandCodeModelMetadata {
-  const reference = parseModelsReference(modelsReference)
-  const textOnlyModelIds = new Set(parseKnownTextOnlyModelIds(cliBundle))
+  const reference = parseModelsReference(modelsReference, enabledModelIds)
+  if (reference.modelIds.length === 0)
+    return { imageModelIds: [], reasoningModelIds: [], reasoningEfforts: {}, maxOutputTokens: {} }
+  const textOnlyModelIds = new Set(parseKnownTextOnlyModelIds(cliBundle, enabledModelIds))
   const capabilities = parseBundleModelCapabilities(cliBundle, reference.modelIds)
 
   return {
@@ -308,9 +332,48 @@ export function diffModelMetadata(
 }
 
 export function hasModelMetadataDiff(diff: ModelMetadataDiff): boolean {
-  return (
-    diff.versionChanged ||
-    Object.entries(diff).some(([key, modelIds]) => key !== "versionChanged" && modelIds.length > 0)
+  return Object.entries(diff).some(
+    ([key, modelIds]) => key !== "versionChanged" && modelIds.length > 0,
+  )
+}
+
+/** Replace only selected IDs present upstream; retain disabled and missing entries verbatim. */
+export function mergeSelectedModelMetadata(
+  current: CommandCodeModelMetadata,
+  upstream: CommandCodeModelMetadata,
+  presentModelIds: ReadonlySet<string>,
+): CommandCodeModelMetadata {
+  const mergeIds = (before: readonly string[], after: readonly string[]) =>
+    sorted([
+      ...before.filter((id) => !presentModelIds.has(id)),
+      ...after.filter((id) => presentModelIds.has(id)),
+    ])
+  const mergeRecord = <T>(
+    before: Readonly<Record<string, T>>,
+    after: Readonly<Record<string, T>>,
+  ) =>
+    Object.fromEntries(
+      [
+        ...Object.entries(before).filter(([id]) => !presentModelIds.has(id)),
+        ...Object.entries(after).filter(([id]) => presentModelIds.has(id)),
+      ].sort(([a], [b]) => a.localeCompare(b)),
+    )
+  return {
+    imageModelIds: mergeIds(current.imageModelIds, upstream.imageModelIds),
+    reasoningModelIds: mergeIds(current.reasoningModelIds, upstream.reasoningModelIds),
+    reasoningEfforts: mergeRecord(current.reasoningEfforts, upstream.reasoningEfforts),
+    maxOutputTokens: mergeRecord(current.maxOutputTokens, upstream.maxOutputTokens),
+  }
+}
+
+export function selectedModelMetadata(
+  metadata: CommandCodeModelMetadata,
+  enabledModelIds: ReadonlySet<string>,
+): CommandCodeModelMetadata {
+  return mergeSelectedModelMetadata(
+    { imageModelIds: [], reasoningModelIds: [], reasoningEfforts: {}, maxOutputTokens: {} },
+    metadata,
+    enabledModelIds,
   )
 }
 
@@ -368,7 +431,7 @@ export function renderCommandCodeCatalog(
     )
     .join("\n")
 
-  return `export const COMMAND_CODE_CLI_VERSION = ${quoted(packageVersion)}\n\nexport type CommandCodeInputType = "text" | "image"\nexport type CommandCodeReasoningEffort = "minimal" | "low" | "medium" | "high" | "xhigh" | "max"\n\n/**\n * Generated from command-code@${packageVersion} by \`npm run sync:commandcode-catalog\`.\n * Do not edit manually.\n */\nexport const MODEL_INPUT_MODALITIES: Readonly<Record<string, readonly CommandCodeInputType[]>> = {\n${imageEntries}\n}\n\nexport const MODEL_REASONING: Readonly<Record<string, true>> = {\n${reasoningEntries}\n}\n\nexport const MODEL_EFFORTS: Readonly<Record<string, readonly CommandCodeReasoningEffort[]>> = {\n${effortEntries}\n}\n\nexport const MODEL_MAX_OUTPUT_TOKENS: Readonly<Record<string, number>> = {\n${maxOutputEntries}\n}\n`
+  return `export const COMMAND_CODE_CLI_VERSION = ${quoted(packageVersion)}\n\nexport type CommandCodeInputType = "text" | "image"\nexport type CommandCodeReasoningEffort = "minimal" | "low" | "medium" | "high" | "xhigh" | "max"\n\n/**\n * Generated from command-code@${packageVersion} by \`npm run sync:commandcode-catalog\`.\n * Only enabled models are refreshed; disabled or missing entries retain their metadata.\n * Do not edit manually.\n */\nexport const MODEL_INPUT_MODALITIES: Readonly<Record<string, readonly CommandCodeInputType[]>> = {\n${imageEntries}\n}\n\nexport const MODEL_REASONING: Readonly<Record<string, true>> = {\n${reasoningEntries}\n}\n\nexport const MODEL_EFFORTS: Readonly<Record<string, readonly CommandCodeReasoningEffort[]>> = {\n${effortEntries}\n}\n\nexport const MODEL_MAX_OUTPUT_TOKENS: Readonly<Record<string, number>> = {\n${maxOutputEntries}\n}\n`
 }
 
 function updateDocumentedCatalogVersion(
@@ -447,6 +510,7 @@ export function updateReadmeCatalogVersion(readme: string, packageVersion: strin
 async function writeSynchronizedCatalog(
   packageVersion: string,
   metadata: CommandCodeModelMetadata,
+  upstreamEffortModelIds: readonly string[],
 ): Promise<readonly string[]> {
   const readme = await readFile(README_PATH, "utf-8")
   await Promise.all([
@@ -455,7 +519,7 @@ async function writeSynchronizedCatalog(
   ])
 
   const overrides = await readFile(OVERRIDES_SOURCE_PATH, "utf-8")
-  const pruned = pruneObsoleteEffortOverrides(overrides, Object.keys(metadata.reasoningEfforts))
+  const pruned = pruneObsoleteEffortOverrides(overrides, upstreamEffortModelIds)
   if (pruned.removedModelIds.length > 0) {
     await writeFile(OVERRIDES_SOURCE_PATH, pruned.contents, "utf-8")
   }
@@ -515,9 +579,13 @@ async function resolvePackageSpec(
   return `command-code@${parsePackageVersion(JSON.parse(stdout) as unknown)}`
 }
 
-async function inspectPackedPackage(packageSpec: string): Promise<{
+async function inspectPackedPackage(
+  packageSpec: string,
+  enabledModelIds: ReadonlySet<string>,
+): Promise<{
   packageVersion: string
   metadata: CommandCodeModelMetadata
+  presentModelIds: readonly string[]
 }> {
   const directory = await mkdtemp(join(tmpdir(), "pi-commandcode-model-check-"))
   const npmCacheDirectory = join(directory, "npm-cache")
@@ -525,7 +593,15 @@ async function inspectPackedPackage(packageSpec: string): Promise<{
   try {
     const resolvedPackageSpec = await resolvePackageSpec(packageSpec, directory, npmCacheDirectory)
     const { stdout } = await execNpmFileAsync(
-      ["pack", resolvedPackageSpec, "--json", "--prefer-online", "--cache", npmCacheDirectory],
+      [
+        "pack",
+        resolvedPackageSpec,
+        "--ignore-scripts",
+        "--json",
+        "--prefer-online",
+        "--cache",
+        npmCacheDirectory,
+      ],
       {
         cwd: directory,
         encoding: "utf-8",
@@ -549,7 +625,8 @@ async function inspectPackedPackage(packageSpec: string): Promise<{
 
     return {
       packageVersion: packageJson.version,
-      metadata: commandCodeModelMetadataFromContents(modelsReference, cliBundle),
+      metadata: commandCodeModelMetadataFromContents(modelsReference, cliBundle, enabledModelIds),
+      presentModelIds: parseModelsReference(modelsReference, enabledModelIds).modelIds,
     }
   } finally {
     await rm(directory, { recursive: true, force: true })
@@ -561,26 +638,50 @@ async function main(): Promise<void> {
   const packageSpec =
     process.argv.find((argument) => argument.startsWith("command-code@")) ?? "command-code@latest"
   const current = currentModelMetadata()
-  const upstreamPackage = await inspectPackedPackage(packageSpec)
-  const diff = diffModelMetadata(
+  const enabledModelIds = await loadModelSelection(getCommandCodeModelsConfigPath())
+  if (enabledModelIds.size === 0) {
+    console.log("No Command Code models enabled; nothing to check or synchronize.")
+    return
+  }
+  const upstreamPackage = await inspectPackedPackage(packageSpec, enabledModelIds)
+  const presentModelIds = new Set(upstreamPackage.presentModelIds)
+  const missing = [...enabledModelIds].filter((id) => !presentModelIds.has(id)).sort()
+  if (missing.length > 0) {
+    console.warn(
+      `Warning: enabled models missing from the upstream CLI metadata catalog: ${missing.join(", ")}. Retaining existing metadata. This does not establish Provider API availability.`,
+    )
+  }
+  const synchronized = mergeSelectedModelMetadata(
     current,
     upstreamPackage.metadata,
+    presentModelIds,
+  )
+  const diff = diffModelMetadata(
+    current,
+    synchronized,
     COMMAND_CODE_CLI_VERSION,
     upstreamPackage.packageVersion,
   )
   const report = metadataReport(
     upstreamPackage.packageVersion,
-    current,
-    upstreamPackage.metadata,
+    selectedModelMetadata(current, enabledModelIds),
+    selectedModelMetadata(synchronized, enabledModelIds),
     diff,
   )
 
   console.log(report)
 
   if (write) {
+    if (!hasModelMetadataDiff(diff)) {
+      console.log(
+        "Enabled model metadata is unchanged; no files written (CLI version changes are informational).",
+      )
+      return
+    }
     const removedOverrides = await writeSynchronizedCatalog(
       upstreamPackage.packageVersion,
-      upstreamPackage.metadata,
+      synchronized,
+      Object.keys(upstreamPackage.metadata.reasoningEfforts),
     )
     console.log(`Synchronized static metadata with command-code@${upstreamPackage.packageVersion}.`)
     if (removedOverrides.length > 0) {
@@ -593,7 +694,7 @@ async function main(): Promise<void> {
 
   if (hasModelMetadataDiff(diff)) {
     throw new Error(
-      `Static model metadata differs from command-code@${upstreamPackage.packageVersion}. Update src/models.ts and the snapshot version.`,
+      `Enabled model metadata differs from command-code@${upstreamPackage.packageVersion}. Run npm run sync:commandcode-catalog.`,
     )
   }
 }

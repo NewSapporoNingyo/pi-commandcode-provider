@@ -3,6 +3,7 @@ import { readFile } from "node:fs/promises"
 import { describe, it } from "node:test"
 
 interface PackageManifest {
+  files?: string[]
   dependencies?: Record<string, string>
   devDependencies?: Record<string, string>
   peerDependencies?: Record<string, string>
@@ -17,6 +18,9 @@ async function readPackageManifest(): Promise<PackageManifest> {
 }
 
 describe("package manifest", () => {
+  it("ships the plugin-relative model selection INI", async () => {
+    assert.ok((await readPackageManifest()).files?.includes("commandcode-models.ini"))
+  })
   it("uses pi's bundled core packages instead of installing private runtime copies", async () => {
     const manifest = await readPackageManifest()
 

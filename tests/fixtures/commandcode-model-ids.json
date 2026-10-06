@@ -1,7 +1,10 @@
 {
   "fetchedAt": "2026-09-24T10:38:04.227Z",
+  "additionsVerifiedAt": "2026-10-06",
   "source": "https://api.commandcode.ai/provider/v1/models",
   "modelIds": [
+    "deepseek/deepseek-v4.1-flash-fast",
+    "inclusionai/ling-3.1-flash:free",
     "claude-sonnet-5",
     "claude-sonnet-4-6",
     "claude-fable-5-1",

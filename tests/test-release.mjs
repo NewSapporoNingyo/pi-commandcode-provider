@@ -20,6 +20,7 @@ const manifest = {
   repository: { url: "git+https://github.com/patlux/pi-commandcode-provider.git" },
   files: [
     "index.ts",
+    "commandcode-models.ini",
     "src/",
     "scripts/",
     "README.md",
@@ -119,6 +120,7 @@ describe("package contents", () => {
   const files = [
     "package.json",
     "index.ts",
+    "commandcode-models.ini",
     "src/core.ts",
     "scripts/pi-isolated.mjs",
     "LICENSE",
@@ -135,6 +137,7 @@ describe("package contents", () => {
     "src/.env",
     "src/auth.json",
     "src/key.pem",
+    "credentials.ini",
     "node_modules/x.js",
     "tests/fixture.ts",
     ".github/workflows/release.yml",
@@ -170,6 +173,7 @@ describe("git release guards", () => {
       writeFileSync(join(origin, "package.json"), JSON.stringify(manifest))
       writeFileSync(join(origin, "package-lock.json"), JSON.stringify(lock))
       writeFileSync(join(origin, "CHANGELOG.md"), changelog)
+      writeFileSync(join(origin, "commandcode-models.ini"), "[models]\n")
       for (const file of ["README.md", "CONTRIBUTING.md", "RELEASE.md", "LICENSE", "index.ts"]) {
         writeFileSync(join(origin, file), "// release fixture\n")
       }

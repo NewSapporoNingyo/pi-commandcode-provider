@@ -17,6 +17,7 @@ import {
 import { join } from "node:path"
 
 import { getConfiguredApiKey } from "./src/api-key.ts"
+import { getCommandCodeModelsConfigPath, loadModelSelection } from "./src/model-selection.ts"
 import { pickCommandCodeApiKey, withResolvedCommandCodeApiKey } from "./src/converters.ts"
 import { createStreamCommandCode } from "./src/core.ts"
 import { calculateCommandCodeCost, commandCodeCostRatesAt } from "./src/cost.ts"
@@ -201,6 +202,7 @@ export default async function (pi: ExtensionAPI) {
   const apiBase = process.env.COMMANDCODE_API_BASE ?? DEFAULT_PROVIDER_API_BASE
   const modelsUrl = process.env.COMMANDCODE_MODELS_URL ?? DEFAULT_MODELS_URL
   const modelsTimeoutMs = getModelsTimeoutMs()
+  const modelsConfigPath = getCommandCodeModelsConfigPath()
   const modelsCachePath =
     process.env.COMMANDCODE_MODELS_CACHE ?? join(getAgentDir(), "commandcode-models.json")
   const streamGenerate = createStreamCommandCode({
@@ -266,20 +268,28 @@ export default async function (pi: ExtensionAPI) {
   const runtime = createCommandCodeRuntime<ProviderConfig, ExtensionCommandContext>(pi, {
     endpoint: modelsUrl,
     cachePath: modelsCachePath,
-    loadModels: (signal) =>
+    configPath: modelsConfigPath,
+    loadSelection: () => loadModelSelection(modelsConfigPath),
+    loadModels: (signal, enabledModelIds) =>
       loadCommandCodeModels({
         url: modelsUrl,
         cachePath: modelsCachePath,
         timeoutMs: modelsTimeoutMs,
         signal,
+        enabledModelIds,
       }),
-    loadCachedModels: () => loadCachedCommandCodeModels(modelsCachePath),
+    loadCachedModels: (enabledModelIds) =>
+      loadCachedCommandCodeModels(modelsCachePath, enabledModelIds),
     createProviderConfig: (models) => {
+      modelApis.clear()
       for (const model of models) modelApis.set(model.id, model.api)
       return createProviderConfig(models, apiBase, transport.stream)
     },
     getTransport: transport.getTransport,
   })
+
+  pi.on("session_start", (_event, ctx) => runtime.attachContext(ctx))
+  pi.on("model_select", (_event, ctx) => runtime.attachContext(ctx))
 
   pi.on("session_shutdown", () => {
     runtime.dispose()

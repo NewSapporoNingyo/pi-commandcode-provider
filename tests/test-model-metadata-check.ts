@@ -5,10 +5,13 @@ import {
   commandCodeModelMetadataFromContents,
   diffModelMetadata,
   hasModelMetadataDiff,
+  mergeSelectedModelMetadata,
+  selectedModelMetadata,
   parseBundleModelCapabilities,
   parseKnownTextOnlyModelIds,
   parseModelsReference,
   parsePackageVersion,
+  parsePackedPackage,
   pruneObsoleteEffortOverrides,
   renderCommandCodeCatalog,
   updateReadmeCatalogVersion,
@@ -52,9 +55,23 @@ describe("Command Code model metadata checker", () => {
     assert.deepEqual(parseKnownTextOnlyModelIds(CLI_BUNDLE), ["text-model"])
   })
 
+  it("ignores unselected invalid entries in the shared text-only set", () => {
+    const bundle = CLI_BUNDLE.replace(
+      'new Set(["text-model"])',
+      'new Set(["text-model",null,{"id":"disabled-model"}])',
+    )
+    assert.deepEqual(
+      commandCodeModelMetadataFromContents(MODELS_REFERENCE, bundle, new Set(["text-model"])),
+      { imageModelIds: [], reasoningModelIds: [], reasoningEfforts: {}, maxOutputTokens: {} },
+    )
+    assert.throws(() => parseKnownTextOnlyModelIds(bundle), /catalog to be strings/)
+  })
+
   it("accepts one exact npm registry version and rejects stale-looking output shapes", () => {
     assert.equal(parsePackageVersion("1.32.2"), "1.32.2")
     assert.equal(parsePackageVersion("2.0.0-beta.1"), "2.0.0-beta.1")
+    assert.equal(parsePackageVersion(["1.32.2"]), "1.32.2")
+    assert.throws(() => parsePackageVersion([]), /one semantic version/)
     assert.throws(() => parsePackageVersion(["1.32.1", "1.32.2"]), /one semantic version/)
     assert.throws(() => parsePackageVersion("latest"), /one semantic version/)
   })
@@ -112,7 +129,7 @@ describe("Command Code model metadata checker", () => {
     assert.equal(hasModelMetadataDiff(diff), true)
   })
 
-  it("reports CLI version drift even when model metadata is unchanged", () => {
+  it("reports CLI version drift without treating it as a model change", () => {
     const metadata: CommandCodeModelMetadata = {
       imageModelIds: ["vision-model"],
       reasoningModelIds: ["vision-model"],
@@ -123,7 +140,7 @@ describe("Command Code model metadata checker", () => {
     const diff = diffModelMetadata(metadata, metadata, "1.32.2", "1.33.0")
 
     assert.equal(diff.versionChanged, true)
-    assert.equal(hasModelMetadataDiff(diff), true)
+    assert.equal(hasModelMetadataDiff(diff), false)
   })
 
   it("renders a deterministic generated catalog and updates the README version", () => {
@@ -144,6 +161,7 @@ export type CommandCodeReasoningEffort = "minimal" | "low" | "medium" | "high" |
 
 /**
  * Generated from command-code@1.33.0 by \`npm run sync:commandcode-catalog\`.
+ * Only enabled models are refreshed; disabled or missing entries retain their metadata.
  * Do not edit manually.
  */
 export const MODEL_INPUT_MODALITIES: Readonly<Record<string, readonly CommandCodeInputType[]>> = {
@@ -303,6 +321,104 @@ export const MODEL_MAX_OUTPUT_TOKENS: Readonly<Record<string, number>> = {
   "short": ["low"],
 }
 `,
+    )
+  })
+})
+
+describe("selected model metadata synchronization", () => {
+  const enabled = new Set(["vision-model", "missing-model"])
+  const current: CommandCodeModelMetadata = {
+    imageModelIds: ["disabled-model", "missing-model", "vision-model"],
+    reasoningModelIds: ["disabled-model", "missing-model", "vision-model"],
+    reasoningEfforts: {
+      "disabled-model": ["low"],
+      "missing-model": ["high"],
+      "vision-model": ["low", "high"],
+    },
+    maxOutputTokens: { "disabled-model": 42, "missing-model": 100, "vision-model": 32768 },
+  }
+
+  it("ignores disabled additions, removals, malformed efforts and bundle objects", () => {
+    const reference = MODELS_REFERENCE.replace("| `text-model`", "| `disabled-model`").replace(
+      "| Text | 200K | — |",
+      "| Text | 200K | turbo |",
+    )
+    const upstream = commandCodeModelMetadataFromContents(reference, CLI_BUNDLE, enabled)
+    const present = new Set(parseModelsReference(reference, enabled).modelIds)
+    assert.deepEqual([...present], ["vision-model"])
+    const merged = mergeSelectedModelMetadata(current, upstream, present)
+    assert.deepEqual(merged, current)
+    assert.equal(hasModelMetadataDiff(diffModelMetadata(current, merged, "1.0.0", "2.0.0")), false)
+    assert.deepEqual(selectedModelMetadata(current, enabled).imageModelIds, [
+      "missing-model",
+      "vision-model",
+    ])
+  })
+
+  it("separates the CLI off switch from pi's selectable reasoning depths", () => {
+    const parsed = parseModelsReference(MODELS_REFERENCE.replace("low, high", "off, low, high"))
+    assert.deepEqual(parsed.reasoningEfforts, { "vision-model": ["low", "high"] })
+    assert.deepEqual(
+      parseModelsReference(MODELS_REFERENCE.replace("low, high", "off")).reasoningEfforts,
+      {},
+    )
+  })
+
+  it("accepts single-package npm pack arrays and name-keyed objects, rejecting ambiguous results", () => {
+    const pkg = { filename: "command-code-1.74.3.tgz" }
+    assert.deepEqual(parsePackedPackage([pkg]), pkg)
+    assert.deepEqual(parsePackedPackage({ "command-code": pkg }), pkg)
+    assert.throws(() => parsePackedPackage([pkg, pkg]), /one package/)
+    assert.throws(() => parsePackedPackage({ "command-code": pkg, other: pkg }), /one package/)
+    assert.throws(() => parsePackedPackage({ "command-code": {} }), /filename/)
+  })
+
+  it("updates only present enabled models, including removal of previously supported capabilities", () => {
+    const upstream = {
+      imageModelIds: [],
+      reasoningModelIds: [],
+      reasoningEfforts: {},
+      maxOutputTokens: {},
+    }
+    const merged = mergeSelectedModelMetadata(current, upstream, new Set(["vision-model"]))
+    assert.deepEqual(merged.imageModelIds, ["disabled-model", "missing-model"])
+    assert.deepEqual(merged.reasoningEfforts, {
+      "disabled-model": ["low"],
+      "missing-model": ["high"],
+    })
+    assert.equal(merged.maxOutputTokens["missing-model"], 100)
+    assert.equal(hasModelMetadataDiff(diffModelMetadata(current, merged)), true)
+  })
+
+  it("preserves all metadata when every enabled model is missing upstream", () => {
+    const selection = new Set(["missing-model"])
+    const upstream = commandCodeModelMetadataFromContents(
+      MODELS_REFERENCE,
+      "unrelated bundle format",
+      selection,
+    )
+    assert.deepEqual(parseModelsReference(MODELS_REFERENCE, selection).modelIds, [])
+    assert.deepEqual(mergeSelectedModelMetadata(current, upstream, new Set()), current)
+  })
+
+  it("still validates capability errors for selected models", () => {
+    assert.throws(
+      () =>
+        commandCodeModelMetadataFromContents(
+          MODELS_REFERENCE.replace("low, high", "turbo"),
+          CLI_BUNDLE,
+          enabled,
+        ),
+      /Unexpected reasoning efforts/,
+    )
+    assert.throws(
+      () =>
+        commandCodeModelMetadataFromContents(
+          MODELS_REFERENCE,
+          CLI_BUNDLE.replace("32768", "-1"),
+          enabled,
+        ),
+      /Unexpected max output/,
     )
   })
 })

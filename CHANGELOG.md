@@ -1,5 +1,12 @@
 # Changelog
 
+## Unreleased
+
+- Add `commandcode-models.ini` for exact model-ID switches, with `COMMANDCODE_MODELS_CONFIG` for a separate configuration path. The initial 2026-10-06 GOAT selection enables 17 models with at least $40 monthly credits or free usage, including Kimi K3's promotion through October 7; all other listed and future unlisted models are disabled.
+- Apply the selection to live discovery, cache startup, offline fallback and `/commandcode-refresh`. Warn when enabled models disappear from a valid online catalog, remove them from the picker, and restore them if they return. Configuration errors retain the last valid selection, or start with no models when none has loaded. Status includes configuration and unavailable-model diagnostics.
+- Limit capability metadata checks and synchronization to enabled models. Ignore disabled entries and CLI version-only changes, retain metadata for enabled models missing from the CLI catalog, and preserve the INI during synchronization.
+- Add display pricing and weekday peak rates for DeepSeek V4.1 Flash Fast and explicit free pricing for Ling 3.1 Flash. Development launchers now start with the enabled GPT-5.6 Sol model.
+
 ## 0.7.5 - 2026-10-06
 
 - Harden the `test-pi-local.mjs` temp-home cleanup against transient `ENOTEMPTY` when RPC children flush session files while exiting: poll with fresh removal attempts instead of relying on `maxRetries`, whose behavior on `ENOTEMPTY` varies across Node versions. Test-only change; the 0.7.4 release run failed on this cleanup after all tests had passed.

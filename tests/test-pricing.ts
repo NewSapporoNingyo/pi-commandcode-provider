@@ -28,6 +28,7 @@ const fixture = JSON.parse(await readFile(fixtureUrl, "utf-8")) as ModelCatalogS
 const pricingFixtureUrl = new URL("./fixtures/commandcode-pricing.json", import.meta.url)
 const pricingFixture = JSON.parse(await readFile(pricingFixtureUrl, "utf-8")) as PricingSnapshot
 const freeModels = new Set([
+  "inclusionai/ling-3.1-flash:free",
   "poolside/laguna-s-2.1-free",
   "stealth/space-bunny-alpha",
   "inclusionai/ling-3.0-flash-sante:free",

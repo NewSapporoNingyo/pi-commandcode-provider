@@ -23,7 +23,7 @@ const child = spawn(
     "--provider",
     "commandcode",
     "--model",
-    "gpt-5.6-luna",
+    "gpt-5.6-sol",
     "--models",
     "commandcode/*",
     ...process.argv.slice(2),

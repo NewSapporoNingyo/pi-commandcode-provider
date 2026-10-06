@@ -39,6 +39,8 @@ export const ZERO_MODEL_COST: CommandCodeModelCost = {
  */
 export const MODEL_COSTS: Readonly<Record<string, CommandCodeModelCost>> = {
   // Free models
+  // Added 2026-10-06 from the GOAT plan's current free-model listing.
+  "inclusionai/ling-3.1-flash:free": { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
   "inclusionai/ling-3.0-flash-sante:free": { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
   "poolside/laguna-s-2.1-free": { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
   "stealth/space-bunny-alpha": { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
@@ -68,6 +70,13 @@ export const MODEL_COSTS: Readonly<Record<string, CommandCodeModelCost>> = {
   "MiniMaxAI/MiniMax-M2.5": { input: 0.3, output: 1.2, cacheRead: 0.03, cacheWrite: 0 },
   // DeepSeek V4 uses time-dependent rates. Display the documented off-peak
   // rates, which apply for 17 hours per day; the Usage page remains authoritative.
+  // Added 2026-10-06: https://commandcode.ai/docs/plans/goat
+  "deepseek/deepseek-v4.1-flash-fast": {
+    input: 0.16,
+    output: 0.58,
+    cacheRead: 0.016,
+    cacheWrite: 0,
+  },
   "deepseek/deepseek-v4-pro": {
     input: 0.66,
     output: 1.98,

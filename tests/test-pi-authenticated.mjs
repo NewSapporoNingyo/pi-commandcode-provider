@@ -61,7 +61,7 @@ describe("authenticated pi launcher", () => {
       "--provider",
       "commandcode",
       "--model",
-      "gpt-5.6-luna",
+      "gpt-5.6-sol",
       "--models",
       "commandcode/*",
       "--thinking",

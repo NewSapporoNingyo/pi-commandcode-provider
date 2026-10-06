@@ -70,6 +70,7 @@ export function validateRelease({ tag, manifest, lock, changelog }) {
 
 export function checkPackageFiles(files) {
   const rootFiles = new Set([
+    "commandcode-models.ini",
     "package.json",
     "index.ts",
     "README.md",

@@ -70,7 +70,7 @@ describe("isolated pi launcher", () => {
       "--provider",
       "commandcode",
       "--model",
-      "gpt-5.6-luna",
+      "gpt-5.6-sol",
       "--model",
       "claude-sonnet-5",
     ])
